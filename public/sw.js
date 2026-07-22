@@ -1,4 +1,4 @@
-const CACHE = 'tam-workhub-v1'
+const CACHE = 'tam-workhub-v3'
 const APP_SHELL = ['./', './manifest.webmanifest', './tam-logo.jpg']
 
 self.addEventListener('install', (event) => {
