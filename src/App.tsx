@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { supabase } from './supabase'
+import { PERSONAL_SESSION_KEY, supabase } from './supabase'
 
 interface BeforeInstallPromptEvent extends Event {
   prompt: () => Promise<void>
@@ -81,6 +81,7 @@ function App() {
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === 'yes')
   const [passwordError, setPasswordError] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
+  const [personalSession, setPersonalSession] = useState(() => localStorage.getItem(PERSONAL_SESSION_KEY))
   const [profile, setProfile] = useState<Participant | null>(null)
   const [participants, setParticipants] = useState<Participant[]>([])
   const [materials, setMaterials] = useState<Material[]>([])
@@ -105,13 +106,14 @@ function App() {
   const canCreateSections = canManageMembers
   const canOpenCollection = Boolean(profile && (canManageMembers || profile.sections.includes(COLLECTION_SECTION)))
 
-  async function loadData(activeSession: Session | null = session) {
-    if (!activeSession?.user) { setProfile(null); setParticipants([]); setMaterials([]); return }
-    const { data: ownProfile, error: profileError } = await supabase.from('profiles').select('*').eq('user_id', activeSession.user.id).maybeSingle()
+  async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession) {
+    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); return }
+    const { data: ownProfile, error: profileError } = await supabase.rpc('get_current_profile')
     if (profileError) { setAppError(profileError.message); return }
-    const mappedProfile = ownProfile ? mapParticipant(ownProfile) : null
+    setAppError('')
+    const mappedProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
     setProfile(mappedProfile)
-    if (!mappedProfile) return
+    if (!mappedProfile) { setParticipants([]); setMaterials([]); return }
     if (['developer', 'leader', 'teacher', 'admin'].includes(mappedProfile.role)) {
       const { data } = await supabase.from('profiles').select('*').order('created_at')
       setParticipants((data ?? []).map(mapParticipant))
@@ -123,10 +125,10 @@ function App() {
   }
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); loadData(data.session) })
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); loadData(data.session, personalSession) })
     const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
-      window.setTimeout(() => loadData(nextSession), 0)
+      window.setTimeout(() => loadData(nextSession, personalSession), 0)
       if (nextSession && screen === 'auth') setScreen(returnScreen)
     })
     return () => listener.subscription.unsubscribe()
@@ -147,13 +149,17 @@ function App() {
   }, [])
 
   useEffect(() => {
+    if (!session && personalSession) {
+      const timer = window.setInterval(() => loadData(null, personalSession), 30000)
+      return () => window.clearInterval(timer)
+    }
     if (!session) return
     const channel = supabase.channel('workhub-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [session?.user.id, profile?.role])
+  }, [session?.user.id, personalSession, profile?.role])
 
   const activeMaterials = useMemo(() => materials.filter((item) => !item.deletedAt), [materials])
   const trashMaterials = useMemo(() => materials.filter((item) => item.deletedAt), [materials])
@@ -172,15 +178,27 @@ function App() {
     const { data, error } = await supabase.rpc('check_hub_password', { attempt })
     if (!error && data === true) { sessionStorage.setItem(SESSION_KEY, 'yes'); setUnlocked(true) } else setPasswordError(true)
   }
-  async function sendMagicLink(event: FormEvent<HTMLFormElement>) {
+  async function signInWithPersonalPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setAuthMessage('')
-    const email = String(new FormData(event.currentTarget).get('email')).trim()
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: PUBLIC_APP_URL } })
-    setAuthMessage(error ? `Не удалось отправить ссылку: ${error.message}` : 'Ссылка для входа отправлена на почту. Откройте письмо на этом устройстве.')
+    const form = event.currentTarget; const data = new FormData(form); const email = String(data.get('email')).trim(); const password = String(data.get('personalPassword'))
+    const { data: result, error } = await supabase.rpc('login_with_personal_password', { login_email: email, attempt: password })
+    if (error) { setAuthMessage('Не удалось проверить данные. Попробуйте ещё раз.'); return }
+    const response = result as { status?: string; token?: string } | null
+    if (response?.status === 'email_not_found') { setAuthMessage('Такой почты нет в организации. Обратитесь за доступом к администрации театра.'); return }
+    if (response?.status === 'password_not_set') { setAuthMessage('Для этой почты ещё не задан личный пароль. Обратитесь к администрации театра.'); return }
+    if (response?.status === 'wrong_password') { setAuthMessage('Неверный личный пароль.'); return }
+    if (response?.status === 'locked') { setAuthMessage('Слишком много попыток. Повторите вход через 15 минут.'); return }
+    if (response?.status !== 'ok' || !response.token) { setAuthMessage('Не удалось войти. Попробуйте ещё раз.'); return }
+    localStorage.setItem(PERSONAL_SESSION_KEY, response.token); setPersonalSession(response.token); form.reset(); await loadData(session, response.token); setScreen(returnScreen)
   }
-  async function logout() { await supabase.auth.signOut(); setProfile(null); setScreen('hub') }
+  async function logout() {
+    if (personalSession) await supabase.rpc('logout_personal_session')
+    localStorage.removeItem(PERSONAL_SESSION_KEY); setPersonalSession(null)
+    if (session) await supabase.auth.signOut()
+    setProfile(null); setParticipants([]); setMaterials([]); setScreen('hub')
+  }
   function requireAccess(target: Screen) {
-    if (!session || !profile) { setReturnScreen(target); setScreen('auth'); return }
+    if (!profile) { setReturnScreen(target); setScreen('auth'); return }
     if (target === 'collection' && !canOpenCollection) { setAppError('Для вашей роли пока нет доступа к копилке.'); return }
     if (target === 'settings' && !canInvite) { setAppError('Для вашей роли нет доступа к настройкам участников.'); return }
     setScreen(target)
@@ -223,16 +241,28 @@ function App() {
   async function addComment(id: string, text: string) { const item = materials.find((m) => m.id === id); if (!item || !text.trim()) return; await supabase.from('materials').update({ comments: [...item.comments, { id: crypto.randomUUID(), author: profile?.name ?? 'Участник', text: text.trim(), createdAt: Date.now() }] }).eq('id', id); await loadData() }
   async function inviteParticipant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!canInvite) return
-    const form = event.currentTarget; const data = new FormData(form); const email = String(data.get('email')).trim(); const requestedRole = String(data.get('role')) as Role; const role: Role = canManageMembers ? requestedRole : 'participant'
-    const alreadyAdded = participants.some((participant) => normalize(participant.email) === normalize(email))
-    if (!alreadyAdded) {
-      const { error } = await supabase.from('profiles').insert({ name: String(data.get('name')).trim(), email, role, sections: [COLLECTION_SECTION], status: 'invited', created_by: profile?.id })
-      if (error) { setAppError(error.message); return }
+    const form = event.currentTarget; const data = new FormData(form); const requestedRole = String(data.get('role')) as Role; const role: Role = canManageMembers ? requestedRole : 'participant'
+    const { error } = await supabase.rpc('create_participant_with_password', {
+      participant_name: String(data.get('name')).trim(), participant_email: String(data.get('email')).trim(), participant_role: role,
+      participant_sections: [COLLECTION_SECTION], initial_password: String(data.get('personalPassword')),
+    })
+    if (error) {
+      setAppError(error.message.includes('email_already_exists') ? 'Участник с такой почтой уже существует.' : error.message.includes('password_too_short') ? 'Личный пароль должен содержать не меньше 6 символов.' : 'Не удалось добавить участника.')
+      return
     }
-    const { error: inviteError } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: PUBLIC_APP_URL } })
-    if (inviteError) { setAppError(inviteError.message); return }
-    setAppNotice(alreadyAdded ? 'Новое письмо для входа отправлено повторно.' : 'Участник добавлен, приглашение отправлено на почту.')
+    setAppNotice('Участник добавлен. Сообщите ему почту и личный пароль.')
     form.reset(); await loadData()
+  }
+  async function setParticipantPassword(id: string, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = event.currentTarget; const password = String(new FormData(form).get('participantPassword'))
+    const { error } = await supabase.rpc('set_participant_password', { target_profile_id: id, new_password: password })
+    if (error) { setAppError(error.message.includes('password_too_short') ? 'Личный пароль должен содержать не меньше 6 символов.' : 'Не удалось изменить личный пароль.'); return }
+    form.reset()
+    if (id === profile?.id && personalSession) {
+      localStorage.removeItem(PERSONAL_SESSION_KEY); setPersonalSession(null); setProfile(null); setScreen('auth'); setAuthMessage('Личный пароль изменён. Войдите с новым паролем.')
+      return
+    }
+    setAppNotice(id === profile?.id ? 'Ваш личный пароль установлен.' : 'Личный пароль участника изменён. Старые входы закрыты.')
   }
   async function updateParticipant(id: string, changes: Partial<Participant>) {
     if (!canManageMembers || id === DEVELOPER_ID) return
@@ -240,7 +270,7 @@ function App() {
     const { error } = await supabase.from('profiles').update(payload).eq('id', id); if (error) setAppError(error.message); else await loadData()
   }
   async function removeParticipant(id: string) { if (!canManageMembers || id === DEVELOPER_ID) return; const { error } = await supabase.from('profiles').delete().eq('id', id); if (error) setAppError(error.message); else await loadData() }
-  async function copyInvitation(email?: string) { await navigator.clipboard.writeText(`Воркхаб Камерного театра-лаборатории Т.А.М.\n${PUBLIC_APP_URL}${email ? `\nВходите с почтой: ${email}` : ''}`) }
+  async function copyInvitation(email?: string) { await navigator.clipboard.writeText(`Воркхаб Камерного театра-лаборатории Т.А.М.\n${PUBLIC_APP_URL}${email ? `\nВаша почта для входа: ${email}` : ''}\nВведите общий пароль, затем почту и личный пароль, который вам сообщит администрация театра.`) }
   async function changePassword(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const value = String(new FormData(form).get('newPassword')).trim(); const { error } = await supabase.rpc('set_hub_password', { new_password: value }); if (error) setAppError(error.message); else form.reset() }
 
   async function installApp() {
@@ -259,35 +289,35 @@ function App() {
   if (!unlocked) return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1><form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>{installButton}</section>{installHelp}</main>
 
   return <div className="app-shell">
-    <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip"><span aria-hidden="true">○</span><span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{session ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Войти по почте</button>}</div></header>
+    <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip"><span aria-hidden="true">○</span><span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{profile ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Личный вход</button>}</div></header>
     {installHelp}
     {appError && <div className="app-alert" role="alert"><span>{appError}</span><button type="button" onClick={() => setAppError('')}>×</button></div>}
     {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" onClick={() => setAppNotice('')}>×</button></div>}
     {screen === 'hub' && <Hub profile={profile} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onSettings={() => requireAccess('settings')} />}
-    {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={sendMagicLink} onBack={() => setScreen('hub')} />}
+    {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
     {screen === 'collection' && <CollectionScreen materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
     {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
     {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
-    {screen === 'settings' && <SettingsScreen participants={participants} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onPassword={changePassword} />}
+    {screen === 'settings' && <SettingsScreen participants={participants} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} />}
   </div>
 }
 
 function InstallHelp({ onClose }: { onClose: () => void }) {
   const isApple = /iPad|iPhone|iPod/.test(navigator.userAgent)
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><span className="logo-mark small">Т·А·М</span><p className="eyebrow">Установка на телефон</p><h2 id="install-title">Добавить иконку приложения</h2>{isApple ? <ol><li>Откройте эту страницу именно в <b>Safari</b>.</li><li>Нажмите <b>Поделиться</b> внизу экрана.</li><li>Прокрутите список вниз и выберите <b>На экран «Домой»</b>.</li><li>Если такого пункта нет: в самом низу нажмите <b>Редактировать действия</b> и добавьте действие <b>На экран «Домой»</b>.</li><li>Включите <b>Открыть как веб-приложение</b> и нажмите <b>Добавить</b>.</li></ol> : <ol><li>Откройте меню браузера <b>⋮</b>.</li><li>Нажмите <b>Добавить на главный экран</b>.</li><li>Выберите <b>Установить</b> и подтвердите.</li></ol>}<p className="install-note">После этого появится отдельная иконка «Т.А.М.», а приложение будет открываться без адресной строки.</p><button className="button button-solid" type="button" onClick={onClose}>Понятно</button></section></div>
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><span className="logo-mark small">Т·А·М</span><p className="eyebrow">Установка на телефон</p><h2 id="install-title">Добавить иконку приложения</h2>{isApple ? <ol><li>Откройте меню браузера.</li><li>Выберите <b>Добавить на экран «Домой»</b> или <b>Установить приложение</b>.</li><li>Подтвердите добавление иконки.</li><li>Если ваш браузер не показывает этот пункт, откройте ссылку в другом браузере.</li></ol> : <ol><li>Откройте меню браузера <b>⋮</b>.</li><li>Нажмите <b>Добавить на главный экран</b>.</li><li>Выберите <b>Установить</b> и подтвердите.</li></ol>}<p className="install-note">После этого появится отдельная иконка «Т.А.М.», а приложение будет открываться без адресной строки.</p><button className="button button-solid" type="button" onClick={onClose}>Понятно</button></section></div>
 }
 
 function Hub({ profile, canOpenCollection, canInvite, canManageMembers, canCreateSections, onCollection, onSettings }: { profile: Participant | null; canOpenCollection: boolean; canInvite: boolean; canManageMembers: boolean; canCreateSections: boolean; onCollection: () => void; onSettings: () => void }) {
   return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><img className="workhub-cover" src={`${import.meta.env.BASE_URL}workhub-cover.jpg`} alt="Камерный театр-лаборатория Т.А.М." /></section><section className="module-grid" aria-label="Разделы театра">
-    <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><span className="module-index">01</span><span className="module-icon">▦</span><span className="module-copy"><b>Копилка материалов</b><small>Ссылки, файлы, идеи и комментарии</small></span><span className="access-chip">{canOpenCollection ? 'Есть доступ' : profile ? 'Нет доступа' : 'Вход по почте'}</span><span>→</span></button>
+    <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><span className="module-index">01</span><span className="module-icon">▦</span><span className="module-copy"><b>Копилка материалов</b><small>Ссылки, файлы, идеи и комментарии</small></span><span className="access-chip">{canOpenCollection ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
     <button className="module-card" type="button" disabled><span className="module-index">02</span><span className="module-icon">□</span><span className="module-copy"><b>Календарь репертуара</b><small>Показы, репетиции и события</small></span><span className="access-chip">Все</span><span>→</span></button>
-    <button className="module-card" type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><span className="module-index">03</span><span className="module-icon">◎</span><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, приглашения и общий пароль</small></span><span className="access-chip">{canManageMembers ? 'Управление' : canInvite ? 'Приглашения' : profile ? 'Нет доступа' : 'Вход по почте'}</span><span>→</span></button>
+    <button className="module-card" type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><span className="module-index">03</span><span className="module-icon">◎</span><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, личные пароли и общий пароль</small></span><span className="access-chip">{canManageMembers ? 'Управление' : canInvite ? 'Участники' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
     {canCreateSections && <div className="module-card muted"><span className="module-index">04</span><span className="module-icon">＋</span><span className="module-copy"><b>Новый раздел</b><small>Создавать разделы могут руководитель и разраб</small></span><span className="access-chip">Позже</span></div>}
   </section></main>
 }
 
 function AuthScreen({ message, onSubmit, onBack }: { message: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onBack: () => void }) {
-  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Личный вход</h1><p>Для закрытых разделов и определения вашей роли</p></div></section><form className="auth-form" onSubmit={onSubmit}><label>Почта участника<input name="email" type="email" placeholder="name@gmail.com" required autoFocus /></label><button className="button button-solid" type="submit">Получить ссылку для входа</button>{message && <p>{message}</p>}</form></main>
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Личный вход</h1><p>Почта и постоянный личный пароль</p></div></section><form className="auth-form" autoComplete="off" onSubmit={onSubmit}><label>Почта участника<input name="email" type="email" placeholder="name@example.com" autoComplete="off" required autoFocus /></label><label>Личный пароль<input name="personalPassword" type="password" minLength={6} autoComplete="off" required /></label><button className="button button-solid" type="submit">Войти</button>{message && <p className="auth-message" role="status">{message}</p>}</form></main>
 }
 
 type CollectionProps = { materials: Material[]; categories: string[]; activeFilters: string[]; query: string; trashCount: number; canDelete: boolean; reactionMenu: string | null; openComments: string | null; onBack: () => void; onAdd: () => void; onQuery: (value: string) => void; onClear: () => void; onTrashScreen: () => void; onFilter: (category: string) => void; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
@@ -325,10 +355,10 @@ function TrashScreen({ materials, onBack, onRestore, onRemove }: { materials: Ma
   return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Корзина</h1><p>Материалы удаляются навсегда через 30 дней</p></div></section><section className="trash-list">{materials.map((item) => { const daysLeft = Math.max(1, 30 - Math.floor((Date.now() - (item.deletedAt ?? Date.now())) / DAY)); return <article className="trash-row" key={item.id}><div><b>{item.source}</b><small>{item.category} · осталось {daysLeft} дн.</small></div><div><button className="button" onClick={() => onRestore(item.id)}>Восстановить</button><button className="button danger" onClick={() => onRemove(item.id)}>Удалить навсегда</button></div></article> })}{!materials.length && <div className="empty-state">Корзина пуста</div>}</section></main>
 }
 
-function SettingsScreen({ participants, canInvite, canManageMembers, onBack, onShare, onInvite, onUpdate, onRemove, onPassword }: { participants: Participant[]; canInvite: boolean; canManageMembers: boolean; onBack: () => void; onShare: (email?: string) => void; onInvite: (event: FormEvent<HTMLFormElement>) => void; onUpdate: (id: string, changes: Partial<Participant>) => void; onRemove: (id: string) => void; onPassword: (event: FormEvent<HTMLFormElement>) => void }) {
-  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Участники и настройки</h1><p>Роли, доступы и приглашения</p></div>{canInvite && <button className="button inverse-button" type="button" onClick={() => onShare()}>Поделиться приложением</button>}</section><section className="settings-grid"><div className="settings-main"><div className="settings-heading"><div><p className="eyebrow">Состав театра</p><h2>Участники</h2></div><span>{participants.length}</span></div>
-    {participants.map((participant) => <article className="participant-row" key={participant.id}><div className="participant-avatar">{participant.name.slice(0, 1).toLocaleUpperCase('ru-RU')}</div><div className="participant-identity"><b>{participant.name}</b><a href={`mailto:${participant.email}`}>{participant.email}</a><small>{participant.status === 'active' ? 'Активен' : 'Приглашён'}</small></div><label><span>Роль</span><select value={participant.role} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { role: event.target.value as Role })}>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label><label className="section-access"><input type="checkbox" checked={participant.sections.includes(COLLECTION_SECTION)} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { sections: event.target.checked ? [COLLECTION_SECTION] : [] })} /><span>Копилка материалов</span></label><div className="participant-actions"><button className="icon-button" type="button" aria-label={`Скопировать приглашение для ${participant.name}`} onClick={() => onShare(participant.email)}>↗</button>{canManageMembers && participant.id !== DEVELOPER_ID && <button className="icon-button danger" type="button" aria-label={`Удалить ${participant.name}`} onClick={() => onRemove(participant.id)}>×</button>}</div></article>)}
-    {canInvite && <form className="invite-form" onSubmit={onInvite}><div><p className="eyebrow">Новый участник</p><h2>Отправить приглашение</h2></div><label>Имя<input name="name" placeholder="Имя и фамилия" required /></label><label>Почта<input name="email" type="email" placeholder="name@gmail.com" required /></label>{canManageMembers ? <label>Роль<select name="role" defaultValue="participant">{(Object.keys(ROLE_LABELS) as Role[]).filter((role) => role !== 'developer').map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label> : <input name="role" type="hidden" value="participant" />}<button className="button button-solid" type="submit">Добавить участника</button></form>}
+function SettingsScreen({ participants, canInvite, canManageMembers, onBack, onShare, onInvite, onUpdate, onRemove, onParticipantPassword, onPassword }: { participants: Participant[]; canInvite: boolean; canManageMembers: boolean; onBack: () => void; onShare: (email?: string) => void; onInvite: (event: FormEvent<HTMLFormElement>) => void; onUpdate: (id: string, changes: Partial<Participant>) => void; onRemove: (id: string) => void; onParticipantPassword: (id: string, event: FormEvent<HTMLFormElement>) => void; onPassword: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Участники и настройки</h1><p>Роли, доступы и личные пароли</p></div>{canInvite && <button className="button inverse-button" type="button" onClick={() => onShare()}>Поделиться приложением</button>}</section><section className="settings-grid"><div className="settings-main"><div className="settings-heading"><div><p className="eyebrow">Состав театра</p><h2>Участники</h2></div><span>{participants.length}</span></div>
+    {participants.map((participant) => { const canSetThisPassword = canManageMembers || participant.role === 'participant'; return <article className="participant-row" key={participant.id}><div className="participant-avatar">{participant.name.slice(0, 1).toLocaleUpperCase('ru-RU')}</div><div className="participant-identity"><b>{participant.name}</b><a href={`mailto:${participant.email}`}>{participant.email}</a><small>{participant.status === 'active' ? 'Активен' : 'Ожидает первого входа'}</small></div><label><span>Роль</span><select value={participant.role} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { role: event.target.value as Role })}>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label><label className="section-access"><input type="checkbox" checked={participant.sections.includes(COLLECTION_SECTION)} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { sections: event.target.checked ? [COLLECTION_SECTION] : [] })} /><span>Копилка материалов</span></label><div className="participant-actions"><button className="icon-button" type="button" aria-label={`Скопировать данные входа для ${participant.name}`} onClick={() => onShare(participant.email)}>↗</button>{canManageMembers && participant.id !== DEVELOPER_ID && <button className="icon-button danger" type="button" aria-label={`Удалить ${participant.name}`} onClick={() => onRemove(participant.id)}>×</button>}</div>{canSetThisPassword && <form className="participant-password" onSubmit={(event) => onParticipantPassword(participant.id, event)}><label><span>Новый личный пароль</span><input name="participantPassword" type="password" minLength={6} autoComplete="new-password" placeholder="Не меньше 6 символов" required /></label><button className="button" type="submit">Установить пароль</button></form>}</article> })}
+    {canInvite && <form className="invite-form" onSubmit={onInvite}><div><p className="eyebrow">Новый участник</p><h2>Добавить участника</h2></div><label>Имя<input name="name" placeholder="Имя и фамилия" required /></label><label>Почта<input name="email" type="email" placeholder="name@example.com" required /></label><label>Личный пароль<input name="personalPassword" type="password" minLength={6} autoComplete="new-password" placeholder="Не меньше 6 символов" required /></label>{canManageMembers ? <label>Роль<select name="role" defaultValue="participant">{(Object.keys(ROLE_LABELS) as Role[]).filter((role) => role !== 'developer').map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label> : <input name="role" type="hidden" value="participant" />}<button className="button button-solid" type="submit">Добавить участника</button></form>}
   </div><aside className="settings-side"><section className="settings-panel"><p className="eyebrow">Права доступа</p><h2>Роли</h2>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <div className="role-note" key={role}><b>{ROLE_LABELS[role]}</b><p>{ROLE_DESCRIPTIONS[role]}</p></div>)}</section>{canManageMembers && <section className="settings-panel"><p className="eyebrow">Безопасность</p><h2>Общий пароль</h2><form className="password-form" onSubmit={onPassword}><label>Новый пароль<input name="newPassword" type="password" minLength={4} required /></label><button className="button" type="submit">Изменить пароль</button></form></section>}<section className="settings-panel developer-card"><span className="access-chip">Разраб</span><h2>Андрей Комов</h2><a href="mailto:a.s.komow@gmail.com">a.s.komow@gmail.com</a><p>Техническое сопровождение воркхаба.</p></section></aside></section></main>
 }
 
