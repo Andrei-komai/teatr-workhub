@@ -196,6 +196,7 @@ h1, h2, p { margin-top: 0; }
 .form-error { margin: 0; color: #ffaaa6; }
 
 @media (max-width: 800px) {
+  input, textarea, select { font-size: 16px; }
   .app-shell { padding: max(12px, env(safe-area-inset-top)) 0 max(12px, env(safe-area-inset-bottom)); }
   .app-header { padding: 10px 12px; }
   .brand b { font-size: .9rem; }

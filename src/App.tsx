@@ -78,7 +78,11 @@ function AttachmentList({ files }: { files: Attachment[] }) {
 }
 
 function App() {
-  const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === 'yes')
+  const [unlocked, setUnlocked] = useState(() => {
+    const hasAccess = localStorage.getItem(SESSION_KEY) === 'yes' || sessionStorage.getItem(SESSION_KEY) === 'yes'
+    if (hasAccess) localStorage.setItem(SESSION_KEY, 'yes')
+    return hasAccess
+  })
   const [passwordError, setPasswordError] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [personalSession, setPersonalSession] = useState(() => localStorage.getItem(PERSONAL_SESSION_KEY))
@@ -176,7 +180,7 @@ function App() {
     event.preventDefault(); setPasswordError(false)
     const attempt = String(new FormData(event.currentTarget).get('password'))
     const { data, error } = await supabase.rpc('check_hub_password', { attempt })
-    if (!error && data === true) { sessionStorage.setItem(SESSION_KEY, 'yes'); setUnlocked(true) } else setPasswordError(true)
+    if (!error && data === true) { localStorage.setItem(SESSION_KEY, 'yes'); setUnlocked(true) } else setPasswordError(true)
   }
   async function signInWithPersonalPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setAuthMessage('')
