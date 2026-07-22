@@ -36,6 +36,8 @@ h1, h2, p { margin-top: 0; }
 .user-chip > span:last-child { display: grid; gap: 1px; }
 .user-chip small { color: #c9c9c3; font-size: .72rem; }
 .header-logout { color: var(--paper); border-color: #656564; }
+.install-button { color: var(--paper); border-color: #656564; white-space: nowrap; }
+.gate-panel > .install-button { width: 100%; margin-top: 12px; color: var(--paper); border-color: #656564; }
 .app-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 10px 12px; border: 1px solid #9a221f; background: #f8e4e1; color: #7b1916; }
 .app-alert.success { border-color: #47715a; background: #e3efe7; color: #244a34; }
 .app-alert button { border: 0; background: transparent; color: inherit; font-size: 1.25rem; cursor: pointer; }
@@ -71,6 +73,14 @@ h1, h2, p { margin-top: 0; }
 .text-button { padding: 4px 6px; border-color: transparent; border-radius: 6px; }
 .text-button:hover { border-color: var(--line); }
 .danger { color: #9a221f; }
+
+.modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / .72); }
+.install-modal { position: relative; width: min(480px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
+.install-modal .logo-mark { margin-bottom: 18px; }
+.install-modal h2 { margin-bottom: 16px; text-transform: uppercase; }
+.install-modal ol { display: grid; gap: 10px; padding-left: 24px; line-height: 1.45; }
+.install-note { margin: 18px 0; padding: 12px; border-left: 4px solid var(--ink); background: #fff; line-height: 1.45; }
+.modal-close { position: absolute; top: 10px; right: 12px; width: 36px; height: 36px; border: 0; background: transparent; font-size: 1.6rem; cursor: pointer; }
 
 .collection-tools { display: grid; grid-template-columns: minmax(180px, 1fr) auto auto; gap: 8px; padding-top: 14px; }
 .search-box { position: relative; }
@@ -201,6 +211,8 @@ h1, h2, p { margin-top: 0; }
   .account-area { align-items: flex-end; flex-direction: column; gap: 3px; }
   .user-chip { padding-top: 2px; }
   .header-logout { font-size: .76rem; }
+  .account-area > .install-button { order: 3; font-size: .76rem; }
+  .install-modal { padding: 20px 18px; }
   .work-header.compact { display: grid; grid-template-columns: auto 1fr; }
   .work-header.compact .inverse-button { grid-column: 1 / -1; width: 100%; margin-left: 0; }
   .module-card { grid-template-columns: auto auto minmax(0, 1fr) auto; }
