@@ -47,6 +47,9 @@ h1, h2, p { margin-top: 0; }
 .work-header.compact > div { flex: 1; }
 .work-header h1 { margin-bottom: 4px; text-transform: uppercase; letter-spacing: .025em; }
 .work-header p { margin: 0; color: #c9c9c3; }
+.hub-hero { height: 158px; min-height: 158px; align-items: stretch; padding: 0 0 0 24px; overflow: hidden; }
+.hub-hero > div { display: flex; flex: 1 1 42%; flex-direction: column; justify-content: center; min-width: 300px; padding-right: 22px; }
+.workhub-cover { display: block; width: min(58%, 700px); height: 158px; min-height: 158px; border-left: 1px solid #4c4c4c; object-fit: cover; object-position: center 43%; }
 .eyebrow { margin-bottom: 8px; text-transform: uppercase; letter-spacing: .14em; font-size: .76rem; }
 .eyebrow.inverse { color: #c9c9c3; }
 
@@ -76,7 +79,7 @@ h1, h2, p { margin-top: 0; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / .72); }
 .install-modal { position: relative; width: min(480px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
-.install-modal .logo-mark { margin-bottom: 18px; }
+.install-modal .logo-mark { width: 64px; margin-bottom: 18px; font-size: .85rem; letter-spacing: -.04em; }
 .install-modal h2 { margin-bottom: 16px; text-transform: uppercase; }
 .install-modal ol { display: grid; gap: 10px; padding-left: 24px; line-height: 1.45; }
 .install-note { margin: 18px 0; padding: 12px; border-left: 4px solid var(--ink); background: #fff; line-height: 1.45; }
@@ -196,6 +199,9 @@ h1, h2, p { margin-top: 0; }
   .brand small { font-size: .76rem; }
   .user-chip { font-size: .88rem; }
   .work-header { margin-top: 10px; padding: 16px 14px; }
+  .hub-hero { height: 142px; min-height: 142px; padding: 0 0 0 16px; }
+  .hub-hero > div { min-width: 230px; padding-right: 14px; }
+  .workhub-cover { width: 48%; height: 142px; min-height: 142px; }
   .module-grid, .collection-tools, .filters, .materials, .material-form, .trash-list, .settings-grid { margin-left: 12px; margin-right: 12px; }
   .module-grid { grid-template-columns: 1fr; }
   .desktop-table { display: none; }
@@ -207,6 +213,7 @@ h1, h2, p { margin-top: 0; }
 
 @media (max-width: 520px) {
   .logo-mark.small { width: 40px; }
+  .install-modal .logo-mark.small { width: 64px; }
   .app-header { align-items: flex-start; }
   .account-area { align-items: flex-end; flex-direction: column; gap: 3px; }
   .user-chip { padding-top: 2px; }
@@ -214,6 +221,9 @@ h1, h2, p { margin-top: 0; }
   .account-area > .install-button { order: 3; font-size: .76rem; }
   .install-modal { padding: 20px 18px; }
   .work-header.compact { display: grid; grid-template-columns: auto 1fr; }
+  .hub-hero { display: grid; height: auto; grid-template-columns: 1fr; padding: 0; }
+  .hub-hero > div { min-width: 0; padding: 18px 14px; }
+  .workhub-cover { width: 100%; height: 112px; min-height: 112px; border-top: 1px solid #4c4c4c; border-left: 0; object-position: center 42%; }
   .work-header.compact .inverse-button { grid-column: 1 / -1; width: 100%; margin-left: 0; }
   .module-card { grid-template-columns: auto auto minmax(0, 1fr) auto; }
   .module-card .access-chip { grid-column: 3; justify-self: start; }
