@@ -88,6 +88,7 @@ function App() {
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null)
   const [authMessage, setAuthMessage] = useState('')
   const [appError, setAppError] = useState('')
+  const [appNotice, setAppNotice] = useState('')
 
   const currentRole: Role = profile?.role ?? 'participant'
   const canManageMembers = currentRole === 'developer' || currentRole === 'leader'
@@ -201,9 +202,14 @@ function App() {
   async function inviteParticipant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!canInvite) return
     const form = event.currentTarget; const data = new FormData(form); const email = String(data.get('email')).trim(); const requestedRole = String(data.get('role')) as Role; const role: Role = canManageMembers ? requestedRole : 'participant'
-    const { error } = await supabase.from('profiles').insert({ name: String(data.get('name')).trim(), email, role, sections: [COLLECTION_SECTION], status: 'invited', created_by: profile?.id })
-    if (error) { setAppError(error.message); return }
-    await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: PUBLIC_APP_URL } })
+    const alreadyAdded = participants.some((participant) => normalize(participant.email) === normalize(email))
+    if (!alreadyAdded) {
+      const { error } = await supabase.from('profiles').insert({ name: String(data.get('name')).trim(), email, role, sections: [COLLECTION_SECTION], status: 'invited', created_by: profile?.id })
+      if (error) { setAppError(error.message); return }
+    }
+    const { error: inviteError } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: PUBLIC_APP_URL } })
+    if (inviteError) { setAppError(inviteError.message); return }
+    setAppNotice(alreadyAdded ? 'Новое письмо для входа отправлено повторно.' : 'Участник добавлен, приглашение отправлено на почту.')
     form.reset(); await loadData()
   }
   async function updateParticipant(id: string, changes: Partial<Participant>) {
@@ -220,6 +226,7 @@ function App() {
   return <div className="app-shell">
     <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area"><div className="user-chip"><span aria-hidden="true">○</span><span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{session ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Войти по почте</button>}</div></header>
     {appError && <div className="app-alert" role="alert"><span>{appError}</span><button type="button" onClick={() => setAppError('')}>×</button></div>}
+    {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" onClick={() => setAppNotice('')}>×</button></div>}
     {screen === 'hub' && <Hub profile={profile} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onSettings={() => requireAccess('settings')} />}
     {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={sendMagicLink} onBack={() => setScreen('hub')} />}
     {screen === 'collection' && <CollectionScreen materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}

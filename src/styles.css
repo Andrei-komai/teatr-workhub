@@ -37,6 +37,7 @@ h1, h2, p { margin-top: 0; }
 .user-chip small { color: #c9c9c3; font-size: .72rem; }
 .header-logout { color: var(--paper); border-color: #656564; }
 .app-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 10px 12px; border: 1px solid #9a221f; background: #f8e4e1; color: #7b1916; }
+.app-alert.success { border-color: #47715a; background: #e3efe7; color: #244a34; }
 .app-alert button { border: 0; background: transparent; color: inherit; font-size: 1.25rem; cursor: pointer; }
 
 .work-header { min-height: 126px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-top: 16px; padding: 20px; background: var(--ink); color: var(--paper); }
