@@ -75,7 +75,7 @@ h1, h2, p { margin-top: 0; }
 .danger { color: #9a221f; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / .72); }
-.install-modal { position: relative; width: min(480px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
+.install-modal { position: relative; width: min(480px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
 .install-modal .logo-mark { margin-bottom: 18px; }
 .install-modal h2 { margin-bottom: 16px; text-transform: uppercase; }
 .install-modal ol { display: grid; gap: 10px; padding-left: 24px; line-height: 1.45; }
