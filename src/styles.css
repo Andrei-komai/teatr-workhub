@@ -36,6 +36,8 @@ h1, h2, p { margin-top: 0; }
 .user-chip > span:last-child { display: grid; gap: 1px; }
 .user-chip small { color: #c9c9c3; font-size: .72rem; }
 .header-logout { color: var(--paper); border-color: #656564; }
+.app-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 10px 12px; border: 1px solid #9a221f; background: #f8e4e1; color: #7b1916; }
+.app-alert button { border: 0; background: transparent; color: inherit; font-size: 1.25rem; cursor: pointer; }
 
 .work-header { min-height: 126px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-top: 16px; padding: 20px; background: var(--ink); color: var(--paper); }
 .work-header.compact { min-height: auto; align-items: center; justify-content: flex-start; }
@@ -108,14 +110,17 @@ h1, h2, p { margin-top: 0; }
 .comments-panel input { padding: 8px 10px; }
 
 .attachment-list { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
-.attachment { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 7px; border: 1px solid rgba(23, 23, 25, .3); border-radius: 6px; font-size: .78rem; }
+.attachment { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 4px 7px; border: 1px solid rgba(23, 23, 25, .3); border-radius: 6px; background: transparent; color: inherit; font-size: .78rem; cursor: pointer; }
+.attachment:disabled { cursor: default; }
+.inline-link { color: inherit; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; overflow-wrap: anywhere; }
+.inline-link:hover { text-decoration-thickness: 2px; }
 .attachment span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .attachment small { color: var(--muted); white-space: nowrap; }
 
 .material-form { padding-top: 14px; }
 .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.material-form fieldset { min-width: 0; display: grid; align-content: start; gap: 10px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
-.material-form legend { padding: 0 6px; font-weight: 700; text-transform: uppercase; }
+.material-form .form-field { min-width: 0; display: grid; align-content: start; gap: 10px; padding: 16px 14px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+.material-form .form-field h2 { margin: 0 0 2px; font-size: 1rem; font-weight: 700; text-transform: uppercase; }
 .material-form textarea, .material-form input { padding: 9px 10px; resize: vertical; }
 .material-form small { color: var(--muted); }
 .file-control { display: grid; gap: 6px; padding-top: 5px; font-size: .86rem; }
@@ -160,6 +165,10 @@ h1, h2, p { margin-top: 0; }
 .developer-card { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .developer-card .access-chip { margin-bottom: 18px; }
 .developer-card p { margin: 8px 0 0; color: #c9c9c3; }
+.auth-form { width: min(520px, calc(100% - 24px)); display: grid; gap: 12px; margin: 28px auto; padding: 20px; border: 1px solid var(--ink); border-radius: 10px; background: #fff; }
+.auth-form label { display: grid; gap: 7px; font-weight: 650; }
+.auth-form input { width: 100%; min-height: 44px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; }
+.auth-form p { margin: 0; color: var(--muted); }
 
 .gate-shell { min-height: 100vh; display: grid; place-items: center; padding: 18px; background: var(--ink); color: var(--paper); }
 .gate-panel { width: min(440px, 100%); }

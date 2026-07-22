@@ -1,65 +1,29 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import type { Session } from '@supabase/supabase-js'
+import { supabase } from './supabase'
 
-type Screen = 'hub' | 'collection' | 'form' | 'trash' | 'settings'
-
+type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings'
 type Role = 'developer' | 'leader' | 'teacher' | 'admin' | 'participant'
 
-type Participant = {
-  id: string
-  name: string
-  email: string
-  role: Role
-  sections: string[]
-  status: 'active' | 'invited'
-}
-
-type Attachment = {
-  id: string
-  name: string
-  size: number
-  type: string
-}
-
-type MaterialComment = {
-  id: string
-  author: string
-  text: string
-  createdAt: number
-}
-
+type Attachment = { id: string; name: string; size: number; type: string; path?: string; file?: File }
+type MaterialComment = { id: string; author: string; text: string; createdAt: number }
 type Material = {
-  id: string
-  source: string
-  sourceFiles: Attachment[]
-  category: string
-  categoryFiles: Attachment[]
-  description: string
-  descriptionFiles: Attachment[]
-  author: string
-  createdAt: number
-  pinned: boolean
-  reactions: Record<string, number>
-  comments: MaterialComment[]
-  deletedAt: number | null
+  id: string; source: string; sourceFiles: Attachment[]; category: string; categoryFiles: Attachment[]
+  description: string; descriptionFiles: Attachment[]; authorId: string | null; createdAt: number
+  pinned: boolean; reactions: Record<string, number>; comments: MaterialComment[]; deletedAt: number | null
+}
+type Participant = {
+  id: string; userId: string | null; name: string; email: string; role: Role
+  sections: string[]; status: 'active' | 'invited'
 }
 
-const STORAGE_KEY = 'tam-workhub-materials-v1'
 const SESSION_KEY = 'tam-workhub-open'
-const SESSION_EMAIL_KEY = 'tam-workhub-email'
-const PARTICIPANTS_KEY = 'tam-workhub-participants-v1'
-const PASSWORD_KEY = 'tam-workhub-password-v1'
 const REACTIONS = ['❤️', '👍', '🔥', '👏', '😁', '👎']
 const DAY = 24 * 60 * 60 * 1000
 const COLLECTION_SECTION = 'collection'
-
-const ROLE_LABELS: Record<Role, string> = {
-  developer: 'Разраб',
-  leader: 'Руководитель',
-  teacher: 'Педагог',
-  admin: 'Админ',
-  participant: 'Участник',
-}
-
+const DEVELOPER_ID = '00000000-0000-0000-0000-000000000001'
+const PUBLIC_APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
+const ROLE_LABELS: Record<Role, string> = { developer: 'Разраб', leader: 'Руководитель', teacher: 'Педагог', admin: 'Админ', participant: 'Участник' }
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   developer: 'Техническое сопровождение и полный доступ ко всем настройкам.',
   leader: 'Полный доступ, участники, роли, пароль и создание новых разделов.',
@@ -68,597 +32,256 @@ const ROLE_DESCRIPTIONS: Record<Role, string> = {
   participant: 'Работа в доступных разделах без удаления материалов.',
 }
 
-const developerParticipant: Participant = {
-  id: 'andrey-komov-developer',
-  name: 'Андрей Комов',
-  email: 'a.s.komow@gmail.com',
-  role: 'developer',
-  sections: [COLLECTION_SECTION],
-  status: 'active',
-}
-
-const seedMaterials: Material[] = [
-  {
-    id: 'seed-1',
-    source: 'Пластический разогрев',
-    sourceFiles: [{ id: 'a1', name: 'Ссылка на видео', size: 0, type: 'link' }],
-    category: 'Для трени',
-    categoryFiles: [],
-    description: 'Упражнение на внимание и общий ритм группы',
-    descriptionFiles: [],
-    author: 'Андрей',
-    createdAt: 1,
-    pinned: true,
-    reactions: { '❤️': 2, '👍': 1 },
-    comments: [{ id: 'c1', author: 'Мария', text: 'Попробуем на ближайшей тренировке', createdAt: Date.now() }],
-    deletedAt: null,
-  },
-  {
-    id: 'seed-2',
-    source: 'Статья о камерной сцене',
-    sourceFiles: [{ id: 'a2', name: 'stage-notes.pdf', size: 348000, type: 'application/pdf' }],
-    category: 'Спектакль',
-    categoryFiles: [],
-    description: 'Идеи по работе с близкой посадкой зрителей',
-    descriptionFiles: [],
-    author: 'Ольга',
-    createdAt: 2,
-    pinned: false,
-    reactions: { '❤️': 4 },
-    comments: [],
-    deletedAt: null,
-  },
-  {
-    id: 'seed-3',
-    source: 'Свет и движение',
-    sourceFiles: [{ id: 'a3', name: 'Reels', size: 0, type: 'link' }],
-    category: 'Перформанс',
-    categoryFiles: [],
-    description: 'Референс для короткого пластического этюда',
-    descriptionFiles: [],
-    author: 'Андрей',
-    createdAt: 3,
-    pinned: false,
-    reactions: { '🔥': 1 },
-    comments: [],
-    deletedAt: null,
-  },
-]
-
-function normalize(value: string) {
-  return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU')
-}
-
-function titleCase(value: string) {
-  const normalized = normalize(value)
-  return normalized ? normalized[0].toLocaleUpperCase('ru-RU') + normalized.slice(1) : ''
-}
-
+function normalize(value: string) { return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU') }
+function titleCase(value: string) { const normalized = normalize(value); return normalized ? normalized[0].toLocaleUpperCase('ru-RU') + normalized.slice(1) : '' }
+function formatSize(bytes: number) { if (!bytes) return ''; return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} КБ` : `${(bytes / 1024 / 1024).toFixed(1)} МБ` }
 function fileListToAttachments(files: FileList | null): Attachment[] {
-  return Array.from(files ?? []).map((file) => ({
-    id: crypto.randomUUID(),
-    name: file.name,
-    size: file.size,
-    type: file.type || 'file',
-  }))
+  return Array.from(files ?? []).map((file) => ({ id: crypto.randomUUID(), name: file.name, size: file.size, type: file.type || 'file', file }))
 }
-
-function formatSize(bytes: number) {
-  if (!bytes) return ''
-  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} КБ`
-  return `${(bytes / 1024 / 1024).toFixed(1)} МБ`
+function mapParticipant(row: Record<string, unknown>): Participant {
+  return { id: String(row.id), userId: row.user_id ? String(row.user_id) : null, name: String(row.name), email: String(row.email), role: row.role as Role, sections: (row.sections as string[]) ?? [], status: row.status as 'active' | 'invited' }
 }
-
-function readMaterials(): Material[] {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (!saved) return seedMaterials
-    const parsed = JSON.parse(saved) as Material[]
-    const cutoff = Date.now() - 30 * DAY
-    return parsed.filter((item) => !item.deletedAt || item.deletedAt > cutoff)
-  } catch {
-    return seedMaterials
+function mapMaterial(row: Record<string, unknown>): Material {
+  return {
+    id: String(row.id), source: String(row.source), sourceFiles: (row.source_files as Attachment[]) ?? [], category: String(row.category),
+    categoryFiles: (row.category_files as Attachment[]) ?? [], description: String(row.description), descriptionFiles: (row.description_files as Attachment[]) ?? [],
+    authorId: row.author_id ? String(row.author_id) : null, createdAt: new Date(String(row.created_at)).getTime(), pinned: Boolean(row.pinned),
+    reactions: (row.reactions as Record<string, number>) ?? {}, comments: (row.comments as MaterialComment[]) ?? [], deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).getTime() : null,
   }
 }
 
-function readParticipants(): Participant[] {
-  try {
-    const saved = localStorage.getItem(PARTICIPANTS_KEY)
-    if (!saved) return [developerParticipant]
-    const parsed = JSON.parse(saved) as Participant[]
-    const withoutDeveloper = parsed.filter((item) => normalize(item.email) !== normalize(developerParticipant.email))
-    return [developerParticipant, ...withoutDeveloper]
-  } catch {
-    return [developerParticipant]
-  }
+async function openAttachment(file: Attachment) {
+  if (!file.path) return
+  const { data, error } = await supabase.storage.from('materials').createSignedUrl(file.path, 60)
+  if (!error && data?.signedUrl) window.open(data.signedUrl, '_blank', 'noopener,noreferrer')
 }
 
-function readHubPassword() {
-  return localStorage.getItem(PASSWORD_KEY) || import.meta.env.VITE_HUB_PASSWORD || 'tam'
-}
-
-function hasCollectionAccess(participant: Participant | null) {
-  return Boolean(participant && (participant.role === 'developer' || participant.role === 'leader' || participant.sections.includes(COLLECTION_SECTION)))
+function LinkifyText({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/[^\s]+)/gi)
+  return <>{parts.map((part, index) => /^https?:\/\//i.test(part)
+    ? <a className="inline-link" href={part} target="_blank" rel="noopener noreferrer" key={`${part}-${index}`}>{part}</a>
+    : <span key={`${part}-${index}`}>{part}</span>)}</>
 }
 
 function AttachmentList({ files }: { files: Attachment[] }) {
   if (!files.length) return null
-  return (
-    <div className="attachment-list">
-      {files.map((file) => (
-        <span className="attachment" key={file.id}>
-          <span aria-hidden="true">▣</span>
-          <span>{file.name}</span>
-          {file.size > 0 && <small>{formatSize(file.size)}</small>}
-        </span>
-      ))}
-    </div>
-  )
+  return <div className="attachment-list">{files.map((file) => (
+    <button className="attachment" type="button" key={file.id} onClick={() => openAttachment(file)} disabled={!file.path && !file.file}>
+      <span aria-hidden="true">▣</span><span>{file.name}</span>{file.size > 0 && <small>{formatSize(file.size)}</small>}
+    </button>
+  ))}</div>
 }
 
 function App() {
   const [unlocked, setUnlocked] = useState(() => sessionStorage.getItem(SESSION_KEY) === 'yes')
   const [passwordError, setPasswordError] = useState(false)
-  const [loginEmail, setLoginEmail] = useState(() => sessionStorage.getItem(SESSION_EMAIL_KEY) || '')
+  const [session, setSession] = useState<Session | null>(null)
+  const [profile, setProfile] = useState<Participant | null>(null)
+  const [participants, setParticipants] = useState<Participant[]>([])
+  const [materials, setMaterials] = useState<Material[]>([])
   const [screen, setScreen] = useState<Screen>('hub')
-  const [materials, setMaterials] = useState<Material[]>(readMaterials)
-  const [participants, setParticipants] = useState<Participant[]>(readParticipants)
+  const [returnScreen, setReturnScreen] = useState<Screen>('hub')
   const [query, setQuery] = useState('')
   const [activeFilters, setActiveFilters] = useState<string[]>([])
   const [reactionMenu, setReactionMenu] = useState<string | null>(null)
   const [openComments, setOpenComments] = useState<string | null>(null)
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null)
+  const [authMessage, setAuthMessage] = useState('')
+  const [appError, setAppError] = useState('')
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(materials))
-  }, [materials])
-
-  useEffect(() => {
-    localStorage.setItem(PARTICIPANTS_KEY, JSON.stringify(participants))
-  }, [participants])
-
-  const currentParticipant = useMemo(
-    () => participants.find((item) => normalize(item.email) === normalize(loginEmail)) ?? null,
-    [participants, loginEmail],
-  )
-  const currentRole = currentParticipant?.role ?? 'participant'
+  const currentRole: Role = profile?.role ?? 'participant'
   const canManageMembers = currentRole === 'developer' || currentRole === 'leader'
   const canInvite = canManageMembers || currentRole === 'teacher' || currentRole === 'admin'
   const canDelete = canInvite
   const canCreateSections = canManageMembers
-  const canOpenCollection = hasCollectionAccess(currentParticipant)
+  const canOpenCollection = Boolean(profile && (canManageMembers || profile.sections.includes(COLLECTION_SECTION)))
+
+  async function loadData(activeSession: Session | null = session) {
+    if (!activeSession?.user) { setProfile(null); setParticipants([]); setMaterials([]); return }
+    const { data: ownProfile, error: profileError } = await supabase.from('profiles').select('*').eq('user_id', activeSession.user.id).maybeSingle()
+    if (profileError) { setAppError(profileError.message); return }
+    const mappedProfile = ownProfile ? mapParticipant(ownProfile) : null
+    setProfile(mappedProfile)
+    if (!mappedProfile) return
+    if (['developer', 'leader', 'teacher', 'admin'].includes(mappedProfile.role)) {
+      const { data } = await supabase.from('profiles').select('*').order('created_at')
+      setParticipants((data ?? []).map(mapParticipant))
+    } else setParticipants([mappedProfile])
+    if (mappedProfile.role === 'developer' || mappedProfile.role === 'leader' || mappedProfile.sections.includes(COLLECTION_SECTION)) {
+      const { data, error } = await supabase.from('materials').select('*').order('created_at')
+      if (error) setAppError(error.message); else setMaterials((data ?? []).map(mapMaterial))
+    }
+  }
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => { setSession(data.session); loadData(data.session) })
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession)
+      window.setTimeout(() => loadData(nextSession), 0)
+      if (nextSession && screen === 'auth') setScreen(returnScreen)
+    })
+    return () => listener.subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!session) return
+    const channel = supabase.channel('workhub-live')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [session?.user.id, profile?.role])
 
   const activeMaterials = useMemo(() => materials.filter((item) => !item.deletedAt), [materials])
   const trashMaterials = useMemo(() => materials.filter((item) => item.deletedAt), [materials])
-
-  const categories = useMemo(
-    () => Array.from(new Map(activeMaterials.map((item) => [normalize(item.category), item.category])).values()).sort((a, b) => a.localeCompare(b, 'ru')),
-    [activeMaterials],
-  )
-
+  const categories = useMemo(() => Array.from(new Map(activeMaterials.map((item) => [normalize(item.category), item.category])).values()).sort((a, b) => a.localeCompare(b, 'ru')), [activeMaterials])
   const filteredMaterials = useMemo(() => {
     const needle = normalize(query)
     return activeMaterials
       .filter((item) => !activeFilters.length || activeFilters.some((filter) => normalize(filter) === normalize(item.category)))
-      .filter((item) => {
-        if (!needle) return true
-        const haystack = [
-          item.source,
-          item.category,
-          item.description,
-          ...item.sourceFiles.map((file) => file.name),
-          ...item.categoryFiles.map((file) => file.name),
-          ...item.descriptionFiles.map((file) => file.name),
-          ...item.comments.map((comment) => comment.text),
-        ].join(' ')
-        return normalize(haystack).includes(needle)
-      })
+      .filter((item) => !needle || normalize([item.source, item.category, item.description, ...item.sourceFiles.map((f) => f.name), ...item.categoryFiles.map((f) => f.name), ...item.descriptionFiles.map((f) => f.name), ...item.comments.map((c) => c.text)].join(' ')).includes(needle))
       .sort((a, b) => Number(b.pinned) - Number(a.pinned) || a.createdAt - b.createdAt)
   }, [activeMaterials, activeFilters, query])
 
-  function unlock(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const data = new FormData(event.currentTarget)
-    const expected = readHubPassword()
-    if (String(data.get('password')) === expected) {
-      const email = String(data.get('email')).trim()
-      sessionStorage.setItem(SESSION_KEY, 'yes')
-      sessionStorage.setItem(SESSION_EMAIL_KEY, email)
-      setLoginEmail(email)
-      setUnlocked(true)
-      setPasswordError(false)
-    } else {
-      setPasswordError(true)
+  async function unlock(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setPasswordError(false)
+    const attempt = String(new FormData(event.currentTarget).get('password'))
+    const { data, error } = await supabase.rpc('check_hub_password', { attempt })
+    if (!error && data === true) { sessionStorage.setItem(SESSION_KEY, 'yes'); setUnlocked(true) } else setPasswordError(true)
+  }
+  async function sendMagicLink(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setAuthMessage('')
+    const email = String(new FormData(event.currentTarget).get('email')).trim()
+    const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: PUBLIC_APP_URL } })
+    setAuthMessage(error ? `Не удалось отправить ссылку: ${error.message}` : 'Ссылка для входа отправлена на почту. Откройте письмо на этом устройстве.')
+  }
+  async function logout() { await supabase.auth.signOut(); setProfile(null); setScreen('hub') }
+  function requireAccess(target: Screen) {
+    if (!session || !profile) { setReturnScreen(target); setScreen('auth'); return }
+    if (target === 'collection' && !canOpenCollection) { setAppError('Для вашей роли пока нет доступа к копилке.'); return }
+    if (target === 'settings' && !canInvite) { setAppError('Для вашей роли нет доступа к настройкам участников.'); return }
+    setScreen(target)
+  }
+  async function uploadFiles(files: Attachment[], materialId: string, field: string) {
+    const result: Attachment[] = []
+    for (const attachment of files) {
+      if (!attachment.file) { const { file: _file, ...stored } = attachment; result.push(stored); continue }
+      const cleanName = attachment.name.replace(/[^a-zA-Zа-яА-ЯёЁ0-9._-]+/g, '-').slice(-100)
+      const path = `${materialId}/${field}/${crypto.randomUUID()}-${cleanName}`
+      const { error } = await supabase.storage.from('materials').upload(path, attachment.file)
+      if (error) throw error
+      result.push({ id: attachment.id, name: attachment.name, size: attachment.size, type: attachment.type, path })
     }
+    return result
   }
-
-  function logout() {
-    sessionStorage.removeItem(SESSION_KEY)
-    sessionStorage.removeItem(SESSION_EMAIL_KEY)
-    setUnlocked(false)
-    setLoginEmail('')
-    setScreen('hub')
+  async function saveMaterial(input: MaterialInput) {
+    if (!profile) return
+    try {
+      const id = crypto.randomUUID(); const existing = categories.find((category) => normalize(category) === normalize(input.category)); const category = existing ?? titleCase(input.category)
+      const [sourceFiles, categoryFiles, descriptionFiles] = await Promise.all([uploadFiles(input.sourceFiles, id, 'source'), uploadFiles(input.categoryFiles, id, 'category'), uploadFiles(input.descriptionFiles, id, 'description')])
+      const { error } = await supabase.from('materials').insert({ id, source: input.source, source_files: sourceFiles, category, category_files: categoryFiles, description: input.description, description_files: descriptionFiles, author_id: profile.id })
+      if (error) throw error; await loadData(); setScreen('collection')
+    } catch (error) { setAppError(error instanceof Error ? error.message : 'Не удалось сохранить материал') }
   }
-
-  function toggleFilter(category: string) {
-    setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])
-  }
-
-  function togglePinned(id: string) {
-    setMaterials((current) => current.map((item) => item.id === id ? { ...item, pinned: !item.pinned } : item))
-  }
-
-  function moveToTrash(id: string) {
-    setMaterials((current) => current.map((item) => item.id === id ? { ...item, deletedAt: Date.now(), pinned: false } : item))
-    setReactionMenu(null)
-    setOpenComments(null)
-  }
-
-  function startEdit(item: Material) {
-    setEditingMaterial(item)
-    setScreen('form')
-  }
-
-  function restore(id: string) {
-    setMaterials((current) => current.map((item) => item.id === id ? { ...item, deletedAt: null } : item))
-  }
-
-  function removeForever(id: string) {
-    setMaterials((current) => current.filter((item) => item.id !== id))
-  }
-
-  function react(id: string, emoji: string) {
-    setMaterials((current) => current.map((item) => item.id === id ? {
-      ...item,
-      reactions: { ...item.reactions, [emoji]: (item.reactions[emoji] ?? 0) + 1 },
-    } : item))
-    setReactionMenu(null)
-  }
-
-  function addComment(id: string, text: string) {
-    if (!text.trim()) return
-    setMaterials((current) => current.map((item) => item.id === id ? {
-      ...item,
-      comments: [...item.comments, { id: crypto.randomUUID(), author: currentParticipant?.name ?? loginEmail, text: text.trim(), createdAt: Date.now() }],
-    } : item))
-  }
-
-  function saveMaterial(material: Omit<Material, 'id' | 'author' | 'createdAt' | 'pinned' | 'reactions' | 'comments' | 'deletedAt'>) {
-    const existing = categories.find((category) => normalize(category) === normalize(material.category))
-    const category = existing ?? titleCase(material.category)
-    setMaterials((current) => [...current, {
-      ...material,
-      category,
-      id: crypto.randomUUID(),
-      author: currentParticipant?.name ?? loginEmail,
-      createdAt: Date.now(),
-      pinned: false,
-      reactions: {},
-      comments: [],
-      deletedAt: null,
-    }])
-    setScreen('collection')
-  }
-
-  function updateMaterial(material: Omit<Material, 'id' | 'author' | 'createdAt' | 'pinned' | 'reactions' | 'comments' | 'deletedAt'>) {
+  async function updateMaterial(input: MaterialInput) {
     if (!editingMaterial) return
-    const existing = categories.find((category) => normalize(category) === normalize(material.category))
-    const category = existing ?? titleCase(material.category)
-    setMaterials((current) => current.map((item) => item.id === editingMaterial.id ? { ...item, ...material, category } : item))
-    setEditingMaterial(null)
-    setScreen('collection')
+    try {
+      const existing = categories.find((category) => normalize(category) === normalize(input.category)); const category = existing ?? titleCase(input.category)
+      const [sourceFiles, categoryFiles, descriptionFiles] = await Promise.all([uploadFiles(input.sourceFiles, editingMaterial.id, 'source'), uploadFiles(input.categoryFiles, editingMaterial.id, 'category'), uploadFiles(input.descriptionFiles, editingMaterial.id, 'description')])
+      const { error } = await supabase.from('materials').update({ source: input.source, source_files: sourceFiles, category, category_files: categoryFiles, description: input.description, description_files: descriptionFiles }).eq('id', editingMaterial.id)
+      if (error) throw error; setEditingMaterial(null); await loadData(); setScreen('collection')
+    } catch (error) { setAppError(error instanceof Error ? error.message : 'Не удалось обновить материал') }
   }
-
-  function inviteParticipant(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!canInvite) return
-    const data = new FormData(event.currentTarget)
-    const email = String(data.get('email')).trim()
-    if (!email || participants.some((item) => normalize(item.email) === normalize(email))) return
-    const requestedRole = String(data.get('role')) as Role
-    const role: Role = canManageMembers && requestedRole in ROLE_LABELS ? requestedRole : 'participant'
-    setParticipants((current) => [...current, {
-      id: crypto.randomUUID(),
-      name: String(data.get('name')).trim() || email.split('@')[0],
-      email,
-      role,
-      sections: [COLLECTION_SECTION],
-      status: 'invited',
-    }])
-    event.currentTarget.reset()
+  async function togglePinned(id: string) { const item = materials.find((m) => m.id === id); if (!item) return; await supabase.from('materials').update({ pinned: !item.pinned }).eq('id', id); await loadData() }
+  async function moveToTrash(id: string) { await supabase.rpc('trash_material', { material_id: id }); await loadData() }
+  async function restore(id: string) { await supabase.rpc('restore_material', { material_id: id }); await loadData() }
+  async function removeForever(id: string) { await supabase.rpc('delete_material_forever', { material_id: id }); await loadData() }
+  async function react(id: string, emoji: string) { const item = materials.find((m) => m.id === id); if (!item) return; await supabase.from('materials').update({ reactions: { ...item.reactions, [emoji]: (item.reactions[emoji] ?? 0) + 1 } }).eq('id', id); setReactionMenu(null); await loadData() }
+  async function addComment(id: string, text: string) { const item = materials.find((m) => m.id === id); if (!item || !text.trim()) return; await supabase.from('materials').update({ comments: [...item.comments, { id: crypto.randomUUID(), author: profile?.name ?? 'Участник', text: text.trim(), createdAt: Date.now() }] }).eq('id', id); await loadData() }
+  async function inviteParticipant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); if (!canInvite) return
+    const form = event.currentTarget; const data = new FormData(form); const email = String(data.get('email')).trim(); const requestedRole = String(data.get('role')) as Role; const role: Role = canManageMembers ? requestedRole : 'participant'
+    const { error } = await supabase.from('profiles').insert({ name: String(data.get('name')).trim(), email, role, sections: [COLLECTION_SECTION], status: 'invited', created_by: profile?.id })
+    if (error) { setAppError(error.message); return }
+    await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: PUBLIC_APP_URL } })
+    form.reset(); await loadData()
   }
-
-  function updateParticipant(id: string, changes: Partial<Participant>) {
-    if (!canManageMembers || id === developerParticipant.id) return
-    setParticipants((current) => current.map((item) => item.id === id ? { ...item, ...changes } : item))
+  async function updateParticipant(id: string, changes: Partial<Participant>) {
+    if (!canManageMembers || id === DEVELOPER_ID) return
+    const payload: Record<string, unknown> = {}; if (changes.role) payload.role = changes.role; if (changes.sections) payload.sections = changes.sections
+    const { error } = await supabase.from('profiles').update(payload).eq('id', id); if (error) setAppError(error.message); else await loadData()
   }
+  async function removeParticipant(id: string) { if (!canManageMembers || id === DEVELOPER_ID) return; const { error } = await supabase.from('profiles').delete().eq('id', id); if (error) setAppError(error.message); else await loadData() }
+  async function copyInvitation(email?: string) { await navigator.clipboard.writeText(`Воркхаб Камерного театра-лаборатории Т.А.М.\n${PUBLIC_APP_URL}${email ? `\nВходите с почтой: ${email}` : ''}`) }
+  async function changePassword(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const value = String(new FormData(form).get('newPassword')).trim(); const { error } = await supabase.rpc('set_hub_password', { new_password: value }); if (error) setAppError(error.message); else form.reset() }
 
-  function removeParticipant(id: string) {
-    if (!canManageMembers || id === developerParticipant.id) return
-    setParticipants((current) => current.filter((item) => item.id !== id))
-  }
+  if (!unlocked) return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1><form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form></section></main>
 
-  async function copyInvitation(email?: string) {
-    const message = `Воркхаб Камерного театра-лаборатории Т.А.М.\n${window.location.origin}${window.location.pathname}${email ? `\nВходите с почтой: ${email}` : ''}`
-    await navigator.clipboard.writeText(message)
-  }
-
-  function changePassword(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!canManageMembers) return
-    const data = new FormData(event.currentTarget)
-    const password = String(data.get('newPassword')).trim()
-    if (password.length < 4) return
-    localStorage.setItem(PASSWORD_KEY, password)
-    event.currentTarget.reset()
-  }
-
-  if (!unlocked) {
-    return (
-      <main className="gate-shell">
-        <section className="gate-panel">
-          <div className="logo-mark">Т·А·М</div>
-          <p className="eyebrow">Камерный театр-лаборатория</p>
-          <h1>Рабочий воркхаб</h1>
-          <form onSubmit={unlock}>
-            <label htmlFor="hub-email">Ваша почта</label>
-            <input id="hub-email" name="email" type="email" autoComplete="email" placeholder="name@gmail.com" required />
-            <label htmlFor="hub-password">Общий пароль</label>
-            <input id="hub-password" name="password" type="password" autoComplete="current-password" />
-            {passwordError && <p className="form-error">Неверный пароль</p>}
-            <button className="button button-solid" type="submit">Войти</button>
-          </form>
-        </section>
-      </main>
-    )
-  }
-
-  return (
-    <div className="app-shell">
-      <header className="app-header">
-        <button className="brand" type="button" onClick={() => setScreen('hub')}>
-          <span className="logo-mark small">Т·А·М</span>
-          <span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span>
-        </button>
-        <div className="account-area">
-          <div className="user-chip"><span aria-hidden="true">○</span><span><b>{currentParticipant?.name ?? 'Гость'}</b><small>{currentParticipant ? ROLE_LABELS[currentParticipant.role] : 'Общий вход'}</small></span></div>
-          <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button>
-        </div>
-      </header>
-
-      {screen === 'hub' && (
-        <main>
-          <section className="work-header">
-            <div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div>
-          </section>
-          <section className="module-grid" aria-label="Разделы театра">
-            <button className="module-card" type="button" disabled={!canOpenCollection} onClick={() => setScreen('collection')}>
-              <span className="module-index">01</span><span className="module-icon" aria-hidden="true">▦</span>
-              <span className="module-copy"><b>Копилка материалов</b><small>Ссылки, файлы, идеи и комментарии</small></span>
-              <span className="access-chip">{canOpenCollection ? 'Есть доступ' : 'Нет доступа'}</span><span aria-hidden="true">→</span>
-            </button>
-            <button className="module-card" type="button" disabled>
-              <span className="module-index">02</span><span className="module-icon" aria-hidden="true">□</span>
-              <span className="module-copy"><b>Календарь репертуара</b><small>Показы, репетиции и события</small></span>
-              <span className="access-chip">Все</span><span aria-hidden="true">→</span>
-            </button>
-            <button className="module-card" type="button" disabled={!canInvite} onClick={() => setScreen('settings')}>
-              <span className="module-index">03</span><span className="module-icon" aria-hidden="true">◎</span>
-              <span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, приглашения и общий пароль</small></span>
-              <span className="access-chip">{canManageMembers ? 'Управление' : canInvite ? 'Приглашения' : 'Нет доступа'}</span><span aria-hidden="true">→</span>
-            </button>
-            {canCreateSections && <div className="module-card muted">
-              <span className="module-index">04</span><span className="module-icon" aria-hidden="true">＋</span>
-              <span className="module-copy"><b>Новый раздел</b><small>Создавать разделы могут руководитель и разраб</small></span>
-              <span className="access-chip">Позже</span>
-            </div>}
-          </section>
-        </main>
-      )}
-
-      {screen === 'collection' && (
-        <main>
-          <section className="work-header compact">
-            <button className="icon-button inverse" type="button" aria-label="Назад" onClick={() => setScreen('hub')}>←</button>
-            <div><h1>Копилка материалов</h1><p>Общий доступ педагогов</p></div>
-            <button className="button inverse-button" type="button" onClick={() => setScreen('form')}>＋ Добавить</button>
-          </section>
-
-          <section className="collection-tools">
-            <label className="search-box"><span aria-hidden="true">⌕</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Поиск по всем полям" /></label>
-            <button className="button" type="button" onClick={() => { setQuery(''); setActiveFilters([]) }}>Очистить</button>
-            {canDelete && <button className="button" type="button" onClick={() => setScreen('trash')}>Корзина{trashMaterials.length ? ` · ${trashMaterials.length}` : ''}</button>}
-          </section>
-
-          <section className="filters" aria-label="Фильтры">
-            <span>Фильтр:</span>
-            {categories.map((category) => <button className={activeFilters.includes(category) ? 'filter active' : 'filter'} type="button" key={category} onClick={() => toggleFilter(category)}>{category}</button>)}
-          </section>
-
-          <section className="materials" aria-live="polite">
-            <div className="desktop-table">
-              <div className="material-row table-head"><span>Важно</span><span>Источник</span><span>Для чего</span><span>Что внутри</span><span>Реакции</span><span></span></div>
-              {filteredMaterials.map((item) => (
-                <MaterialRow key={item.id} item={item} mobile={false} canDelete={canDelete} reactionMenu={reactionMenu} commentsOpen={openComments} onPin={togglePinned} onEdit={startEdit} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />
-              ))}
-            </div>
-            <div className="mobile-cards">
-              {filteredMaterials.map((item) => (
-                <MaterialRow key={item.id} item={item} mobile canDelete={canDelete} reactionMenu={reactionMenu} commentsOpen={openComments} onPin={togglePinned} onEdit={startEdit} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />
-              ))}
-            </div>
-            {!filteredMaterials.length && <div className="empty-state">Ничего не найдено</div>}
-          </section>
-        </main>
-      )}
-
-      {screen === 'settings' && (
-        <main>
-          <section className="work-header compact">
-            <button className="icon-button inverse" type="button" aria-label="Назад" onClick={() => setScreen('hub')}>←</button>
-            <div><h1>Участники и настройки</h1><p>Роли, доступы и приглашения</p></div>
-            {canInvite && <button className="button inverse-button" type="button" onClick={() => copyInvitation()}>Поделиться приложением</button>}
-          </section>
-
-          <section className="settings-grid">
-            <div className="settings-main">
-              <div className="settings-heading"><div><p className="eyebrow">Состав театра</p><h2>Участники</h2></div><span>{participants.length}</span></div>
-              {participants.map((participant) => (
-                <article className="participant-row" key={participant.id}>
-                  <div className="participant-avatar" aria-hidden="true">{participant.name.slice(0, 1).toLocaleUpperCase('ru-RU')}</div>
-                  <div className="participant-identity"><b>{participant.name}</b><a href={`mailto:${participant.email}`}>{participant.email}</a><small>{participant.status === 'active' ? 'Активен' : 'Приглашён'}</small></div>
-                  <label><span>Роль</span><select value={participant.role} disabled={!canManageMembers || participant.id === developerParticipant.id} onChange={(event) => updateParticipant(participant.id, { role: event.target.value as Role })}>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label>
-                  <label className="section-access"><input type="checkbox" checked={participant.sections.includes(COLLECTION_SECTION)} disabled={!canManageMembers || participant.id === developerParticipant.id} onChange={(event) => updateParticipant(participant.id, { sections: event.target.checked ? [COLLECTION_SECTION] : [] })} /><span>Копилка материалов</span></label>
-                  <div className="participant-actions"><button className="icon-button" type="button" aria-label={`Скопировать приглашение для ${participant.name}`} onClick={() => copyInvitation(participant.email)}>↗</button>{canManageMembers && participant.id !== developerParticipant.id && <button className="icon-button danger" type="button" aria-label={`Удалить ${participant.name}`} onClick={() => removeParticipant(participant.id)}>×</button>}</div>
-                </article>
-              ))}
-
-              {canInvite && <form className="invite-form" onSubmit={inviteParticipant}>
-                <div><p className="eyebrow">Новый участник</p><h2>Отправить приглашение</h2></div>
-                <label>Имя<input name="name" placeholder="Имя и фамилия" required /></label>
-                <label>Почта<input name="email" type="email" placeholder="name@gmail.com" required /></label>
-                {canManageMembers ? <label>Роль<select name="role" defaultValue="participant">{(Object.keys(ROLE_LABELS) as Role[]).filter((role) => role !== 'developer').map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label> : <input name="role" type="hidden" value="participant" />}
-                <button className="button button-solid" type="submit">Добавить участника</button>
-              </form>}
-            </div>
-
-            <aside className="settings-side">
-              <section className="settings-panel"><p className="eyebrow">Права доступа</p><h2>Роли</h2>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <div className="role-note" key={role}><b>{ROLE_LABELS[role]}</b><p>{ROLE_DESCRIPTIONS[role]}</p></div>)}</section>
-              {canManageMembers && <section className="settings-panel"><p className="eyebrow">Безопасность</p><h2>Общий пароль</h2><form className="password-form" onSubmit={changePassword}><label>Новый пароль<input name="newPassword" type="password" minLength={4} required /></label><button className="button" type="submit">Изменить пароль</button></form><small>После изменения старый пароль перестанет работать на этом устройстве.</small></section>}
-              <section className="settings-panel developer-card"><span className="access-chip">Разраб</span><h2>Андрей Комов</h2><a href="mailto:a.s.komow@gmail.com">a.s.komow@gmail.com</a><p>Техническое сопровождение воркхаба.</p></section>
-            </aside>
-          </section>
-        </main>
-      )}
-
-      {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
-
-      {screen === 'trash' && (
-        <main>
-          <section className="work-header compact">
-            <button className="icon-button inverse" type="button" aria-label="Назад" onClick={() => setScreen('collection')}>←</button>
-            <div><h1>Корзина</h1><p>Материалы удаляются навсегда через 30 дней</p></div>
-          </section>
-          <section className="trash-list">
-            {trashMaterials.map((item) => {
-              const daysLeft = Math.max(1, 30 - Math.floor((Date.now() - (item.deletedAt ?? Date.now())) / DAY))
-              return <article className="trash-row" key={item.id}><div><b>{item.source}</b><small>{item.category} · осталось {daysLeft} дн.</small></div><div><button className="button" onClick={() => restore(item.id)}>Восстановить</button><button className="button danger" onClick={() => removeForever(item.id)}>Удалить навсегда</button></div></article>
-            })}
-            {!trashMaterials.length && <div className="empty-state">Корзина пуста</div>}
-          </section>
-        </main>
-      )}
-    </div>
-  )
+  return <div className="app-shell">
+    <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area"><div className="user-chip"><span aria-hidden="true">○</span><span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{session ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Войти по почте</button>}</div></header>
+    {appError && <div className="app-alert" role="alert"><span>{appError}</span><button type="button" onClick={() => setAppError('')}>×</button></div>}
+    {screen === 'hub' && <Hub profile={profile} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onSettings={() => requireAccess('settings')} />}
+    {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={sendMagicLink} onBack={() => setScreen('hub')} />}
+    {screen === 'collection' && <CollectionScreen materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
+    {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
+    {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
+    {screen === 'settings' && <SettingsScreen participants={participants} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onPassword={changePassword} />}
+  </div>
 }
 
-type RowProps = {
-  item: Material
-  mobile: boolean
-  canDelete: boolean
-  reactionMenu: string | null
-  commentsOpen: string | null
-  onPin: (id: string) => void
-  onEdit: (item: Material) => void
-  onTrash: (id: string) => void
-  onReactionMenu: (id: string | null) => void
-  onReact: (id: string, emoji: string) => void
-  onComments: (id: string | null) => void
-  onAddComment: (id: string, text: string) => void
+function Hub({ profile, canOpenCollection, canInvite, canManageMembers, canCreateSections, onCollection, onSettings }: { profile: Participant | null; canOpenCollection: boolean; canInvite: boolean; canManageMembers: boolean; canCreateSections: boolean; onCollection: () => void; onSettings: () => void }) {
+  return <main><section className="work-header"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div></section><section className="module-grid" aria-label="Разделы театра">
+    <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><span className="module-index">01</span><span className="module-icon">▦</span><span className="module-copy"><b>Копилка материалов</b><small>Ссылки, файлы, идеи и комментарии</small></span><span className="access-chip">{canOpenCollection ? 'Есть доступ' : profile ? 'Нет доступа' : 'Вход по почте'}</span><span>→</span></button>
+    <button className="module-card" type="button" disabled><span className="module-index">02</span><span className="module-icon">□</span><span className="module-copy"><b>Календарь репертуара</b><small>Показы, репетиции и события</small></span><span className="access-chip">Все</span><span>→</span></button>
+    <button className="module-card" type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><span className="module-index">03</span><span className="module-icon">◎</span><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, приглашения и общий пароль</small></span><span className="access-chip">{canManageMembers ? 'Управление' : canInvite ? 'Приглашения' : profile ? 'Нет доступа' : 'Вход по почте'}</span><span>→</span></button>
+    {canCreateSections && <div className="module-card muted"><span className="module-index">04</span><span className="module-icon">＋</span><span className="module-copy"><b>Новый раздел</b><small>Создавать разделы могут руководитель и разраб</small></span><span className="access-chip">Позже</span></div>}
+  </section></main>
 }
 
+function AuthScreen({ message, onSubmit, onBack }: { message: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onBack: () => void }) {
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Личный вход</h1><p>Для закрытых разделов и определения вашей роли</p></div></section><form className="auth-form" onSubmit={onSubmit}><label>Почта участника<input name="email" type="email" placeholder="name@gmail.com" required autoFocus /></label><button className="button button-solid" type="submit">Получить ссылку для входа</button>{message && <p>{message}</p>}</form></main>
+}
+
+type CollectionProps = { materials: Material[]; categories: string[]; activeFilters: string[]; query: string; trashCount: number; canDelete: boolean; reactionMenu: string | null; openComments: string | null; onBack: () => void; onAdd: () => void; onQuery: (value: string) => void; onClear: () => void; onTrashScreen: () => void; onFilter: (category: string) => void; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
+function CollectionScreen(props: CollectionProps) {
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={props.onBack}>←</button><div><h1>Копилка материалов</h1><p>Общие материалы театра</p></div><button className="button inverse-button" type="button" onClick={props.onAdd}>＋ Добавить</button></section>
+    <section className="collection-tools"><label className="search-box"><span>⌕</span><input value={props.query} onChange={(event) => props.onQuery(event.target.value)} placeholder="Поиск по всем полям" /></label><button className="button" type="button" onClick={props.onClear}>Очистить</button>{props.canDelete && <button className="button" type="button" onClick={props.onTrashScreen}>Корзина{props.trashCount ? ` · ${props.trashCount}` : ''}</button>}</section>
+    <section className="filters" aria-label="Фильтры"><span>Фильтр:</span>{props.categories.map((category) => <button className={props.activeFilters.includes(category) ? 'filter active' : 'filter'} type="button" key={category} onClick={() => props.onFilter(category)}>{category}</button>)}</section>
+    <section className="materials" aria-live="polite"><div className="desktop-table"><div className="material-row table-head"><span>Важно</span><span>Источник</span><span>Для чего</span><span>Что внутри</span><span>Реакции</span><span></span></div>{props.materials.map((item) => <MaterialRow key={item.id} item={item} mobile={false} {...props} commentsOpen={props.openComments} />)}</div><div className="mobile-cards">{props.materials.map((item) => <MaterialRow key={item.id} item={item} mobile {...props} commentsOpen={props.openComments} />)}</div>{!props.materials.length && <div className="empty-state">Здесь пока нет материалов</div>}</section>
+  </main>
+}
+
+type RowProps = { item: Material; mobile: boolean; canDelete: boolean; reactionMenu: string | null; commentsOpen: string | null; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
 function MaterialRow({ item, mobile, canDelete, reactionMenu, commentsOpen, onPin, onEdit, onTrash, onReactionMenu, onReact, onComments, onAddComment }: RowProps) {
-  const [comment, setComment] = useState('')
-  const longPressTimer = useRef<number | null>(null)
-  const longPressTriggered = useRef(false)
+  const [comment, setComment] = useState(''); const longPressTimer = useRef<number | null>(null); const longPressTriggered = useRef(false)
   const style = { '--row-color': `var(--category-${Math.abs(Array.from(normalize(item.category)).reduce((sum, letter) => sum + letter.codePointAt(0)!, 0)) % 6 + 1})` } as React.CSSProperties
   const reactionCount = Object.values(item.reactions).reduce((sum, count) => sum + count, 0)
-
-  const reactions = (
-    <div className="reaction-area">
-      <button className="text-button" type="button"
-        onPointerDown={() => { longPressTriggered.current = false; longPressTimer.current = window.setTimeout(() => { longPressTriggered.current = true; onReactionMenu(item.id) }, 450) }}
-        onPointerUp={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }}
-        onPointerLeave={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }}
-        onClick={() => { if (longPressTriggered.current) { longPressTriggered.current = false; return }; onReactionMenu(reactionMenu === item.id ? null : item.id) }} aria-expanded={reactionMenu === item.id}
-        title="Нажмите или удерживайте, чтобы выбрать реакцию">
-        {reactionCount ? Object.entries(item.reactions).filter(([, count]) => count).map(([emoji, count]) => `${emoji}${count}`).join(' ') : '＋ реакция'}
-      </button>
-      {reactionMenu === item.id && <div className="reaction-menu">{REACTIONS.map((emoji) => <button type="button" key={emoji} onClick={() => onReact(item.id, emoji)}>{emoji}</button>)}</div>}
-    </div>
-  )
-
-  const comments = commentsOpen === item.id && (
-    <div className="comments-panel">
-      {item.comments.map((entry) => <p key={entry.id}><b>{entry.author}:</b> {entry.text}</p>)}
-      <form onSubmit={(event) => { event.preventDefault(); onAddComment(item.id, comment); setComment('') }}>
-        <input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий" />
-        <button className="button" type="submit">Добавить</button>
-      </form>
-    </div>
-  )
-
-  if (mobile) {
-    return (
-      <article className="material-card" style={style} data-material-id={item.id} data-source={item.source}>
-        <header><span className="category-chip">{item.category}</span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></header>
-        <section><b>{item.source}</b><AttachmentList files={item.sourceFiles} /></section>
-        <section><p>{item.description}</p><AttachmentList files={item.descriptionFiles} /></section>
-        <footer>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span></footer>
-        {comments}
-      </article>
-    )
-  }
-
-  return (
-    <article className="material-row" style={style} data-material-id={item.id} data-source={item.source}>
-      <span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></span>
-      <span><b>{item.source}</b><AttachmentList files={item.sourceFiles} /></span>
-      <span><span className="category-chip">{item.category}</span><AttachmentList files={item.categoryFiles} /></span>
-      <span>{item.description}<AttachmentList files={item.descriptionFiles} /></span>
-      <span>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button></span>
-      <span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span>
-      {comments && <div className="row-comments">{comments}</div>}
-    </article>
-  )
+  const reactions = <div className="reaction-area"><button className="text-button" type="button" onPointerDown={() => { longPressTriggered.current = false; longPressTimer.current = window.setTimeout(() => { longPressTriggered.current = true; onReactionMenu(item.id) }, 450) }} onPointerUp={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onPointerLeave={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onClick={() => { if (longPressTriggered.current) { longPressTriggered.current = false; return }; onReactionMenu(reactionMenu === item.id ? null : item.id) }}>{reactionCount ? Object.entries(item.reactions).filter(([, count]) => count).map(([emoji, count]) => `${emoji}${count}`).join(' ') : '＋ реакция'}</button>{reactionMenu === item.id && <div className="reaction-menu">{REACTIONS.map((emoji) => <button type="button" key={emoji} onClick={() => onReact(item.id, emoji)}>{emoji}</button>)}</div>}</div>
+  const comments = commentsOpen === item.id && <div className="comments-panel">{item.comments.map((entry) => <p key={entry.id}><b>{entry.author}:</b> <LinkifyText text={entry.text} /></p>)}<form onSubmit={(event) => { event.preventDefault(); onAddComment(item.id, comment); setComment('') }}><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий" /><button className="button" type="submit">Добавить</button></form></div>
+  if (mobile) return <article className="material-card" style={style}><header><span className="category-chip">{item.category}</span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></header><section><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></section><section><p><LinkifyText text={item.description} /></p><AttachmentList files={item.descriptionFiles} /></section><footer>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span></footer>{comments}</article>
+  return <article className="material-row" style={style}><span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></span><span><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></span><span><span className="category-chip">{item.category}</span><AttachmentList files={item.categoryFiles} /></span><span><LinkifyText text={item.description} /><AttachmentList files={item.descriptionFiles} /></span><span>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button></span><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span>{comments && <div className="row-comments">{comments}</div>}</article>
 }
 
-function MaterialForm({ categories, initial, onCancel, onSave }: { categories: string[]; initial: Material | null; onCancel: () => void; onSave: (material: Omit<Material, 'id' | 'author' | 'createdAt' | 'pinned' | 'reactions' | 'comments' | 'deletedAt'>) => void }) {
-  const [sourceFiles, setSourceFiles] = useState<Attachment[]>(initial?.sourceFiles ?? [])
-  const [categoryFiles, setCategoryFiles] = useState<Attachment[]>(initial?.categoryFiles ?? [])
-  const [descriptionFiles, setDescriptionFiles] = useState<Attachment[]>(initial?.descriptionFiles ?? [])
-  const [notify, setNotify] = useState(false)
+type MaterialInput = Pick<Material, 'source' | 'sourceFiles' | 'category' | 'categoryFiles' | 'description' | 'descriptionFiles'>
+function MaterialForm({ categories, initial, onCancel, onSave }: { categories: string[]; initial: Material | null; onCancel: () => void; onSave: (material: MaterialInput) => Promise<void> }) {
+  const [sourceFiles, setSourceFiles] = useState<Attachment[]>(initial?.sourceFiles ?? []); const [categoryFiles, setCategoryFiles] = useState<Attachment[]>(initial?.categoryFiles ?? []); const [descriptionFiles, setDescriptionFiles] = useState<Attachment[]>(initial?.descriptionFiles ?? []); const [notify, setNotify] = useState(false); const [saving, setSaving] = useState(false)
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setSaving(true); const data = new FormData(event.currentTarget); await onSave({ source: String(data.get('source')).trim(), sourceFiles, category: String(data.get('category')).trim(), categoryFiles, description: String(data.get('description')).trim(), descriptionFiles }); if (notify && Notification.permission === 'default') Notification.requestPermission().catch(() => undefined); setSaving(false) }
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onCancel}>←</button><div><h1>{initial ? 'Редактирование материала' : 'Новый материал'}</h1><p>Заполните три поля</p></div></section><form className="material-form" onSubmit={submit}><div className="form-grid">
+    <section className="form-field"><h2>1. Источник</h2><textarea name="source" rows={5} defaultValue={initial?.source} placeholder="Ссылка, название или текст" required /><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setSourceFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={sourceFiles} /></section>
+    <section className="form-field"><h2>2. Для чего</h2><input name="category" list="category-list" defaultValue={initial?.category} placeholder="Например: спектакль" required /><datalist id="category-list">{categories.map((category) => <option value={category} key={category} />)}</datalist><small>Одна категория. Регистр букв не учитывается.</small><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setCategoryFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={categoryFiles} /></section>
+    <section className="form-field"><h2>3. Что внутри</h2><textarea name="description" rows={5} defaultValue={initial?.description} placeholder="Описание или комментарий" required /><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setDescriptionFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={descriptionFiles} /></section>
+  </div><div className="form-footer"><label className="switch"><input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} /><span>Уведомить остальных педагогов</span></label><div><button className="button" type="button" onClick={onCancel}>Отмена</button><button className="button button-solid" type="submit" disabled={saving}>{saving ? 'Сохраняю…' : initial ? 'Сохранить изменения' : 'Сохранить'}</button></div></div></form></main>
+}
 
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const data = new FormData(event.currentTarget)
-    onSave({
-      source: String(data.get('source')).trim(),
-      sourceFiles,
-      category: String(data.get('category')).trim(),
-      categoryFiles,
-      description: String(data.get('description')).trim(),
-      descriptionFiles,
-    })
-    if (notify && Notification.permission === 'default') Notification.requestPermission().catch(() => undefined)
-  }
+function TrashScreen({ materials, onBack, onRestore, onRemove }: { materials: Material[]; onBack: () => void; onRestore: (id: string) => void; onRemove: (id: string) => void }) {
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Корзина</h1><p>Материалы удаляются навсегда через 30 дней</p></div></section><section className="trash-list">{materials.map((item) => { const daysLeft = Math.max(1, 30 - Math.floor((Date.now() - (item.deletedAt ?? Date.now())) / DAY)); return <article className="trash-row" key={item.id}><div><b>{item.source}</b><small>{item.category} · осталось {daysLeft} дн.</small></div><div><button className="button" onClick={() => onRestore(item.id)}>Восстановить</button><button className="button danger" onClick={() => onRemove(item.id)}>Удалить навсегда</button></div></article> })}{!materials.length && <div className="empty-state">Корзина пуста</div>}</section></main>
+}
 
-  return (
-    <main>
-      <section className="work-header compact">
-        <button className="icon-button inverse" type="button" aria-label="Назад" onClick={onCancel}>←</button>
-        <div><h1>{initial ? 'Редактирование материала' : 'Новый материал'}</h1><p>Заполните три поля</p></div>
-      </section>
-      <form className="material-form" onSubmit={submit}>
-        <div className="form-grid">
-          <fieldset><legend>1. Источник</legend><textarea name="source" rows={5} defaultValue={initial?.source} placeholder="Ссылка, название или текст" required /><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setSourceFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={sourceFiles} /></fieldset>
-          <fieldset><legend>2. Для чего</legend><input name="category" list="category-list" defaultValue={initial?.category} placeholder="Например: спектакль" required /><datalist id="category-list">{categories.map((category) => <option value={category} key={category} />)}</datalist><small>Одна категория. Регистр букв не учитывается.</small><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setCategoryFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={categoryFiles} /></fieldset>
-          <fieldset><legend>3. Что внутри</legend><textarea name="description" rows={5} defaultValue={initial?.description} placeholder="Описание или комментарий" required /><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setDescriptionFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={descriptionFiles} /></fieldset>
-        </div>
-        <div className="form-footer"><label className="switch"><input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} /><span>Уведомить остальных педагогов</span></label><div><button className="button" type="button" onClick={onCancel}>Отмена</button><button className="button button-solid" type="submit">{initial ? 'Сохранить изменения' : 'Сохранить'}</button></div></div>
-      </form>
-    </main>
-  )
+function SettingsScreen({ participants, canInvite, canManageMembers, onBack, onShare, onInvite, onUpdate, onRemove, onPassword }: { participants: Participant[]; canInvite: boolean; canManageMembers: boolean; onBack: () => void; onShare: (email?: string) => void; onInvite: (event: FormEvent<HTMLFormElement>) => void; onUpdate: (id: string, changes: Partial<Participant>) => void; onRemove: (id: string) => void; onPassword: (event: FormEvent<HTMLFormElement>) => void }) {
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Участники и настройки</h1><p>Роли, доступы и приглашения</p></div>{canInvite && <button className="button inverse-button" type="button" onClick={() => onShare()}>Поделиться приложением</button>}</section><section className="settings-grid"><div className="settings-main"><div className="settings-heading"><div><p className="eyebrow">Состав театра</p><h2>Участники</h2></div><span>{participants.length}</span></div>
+    {participants.map((participant) => <article className="participant-row" key={participant.id}><div className="participant-avatar">{participant.name.slice(0, 1).toLocaleUpperCase('ru-RU')}</div><div className="participant-identity"><b>{participant.name}</b><a href={`mailto:${participant.email}`}>{participant.email}</a><small>{participant.status === 'active' ? 'Активен' : 'Приглашён'}</small></div><label><span>Роль</span><select value={participant.role} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { role: event.target.value as Role })}>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label><label className="section-access"><input type="checkbox" checked={participant.sections.includes(COLLECTION_SECTION)} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { sections: event.target.checked ? [COLLECTION_SECTION] : [] })} /><span>Копилка материалов</span></label><div className="participant-actions"><button className="icon-button" type="button" aria-label={`Скопировать приглашение для ${participant.name}`} onClick={() => onShare(participant.email)}>↗</button>{canManageMembers && participant.id !== DEVELOPER_ID && <button className="icon-button danger" type="button" aria-label={`Удалить ${participant.name}`} onClick={() => onRemove(participant.id)}>×</button>}</div></article>)}
+    {canInvite && <form className="invite-form" onSubmit={onInvite}><div><p className="eyebrow">Новый участник</p><h2>Отправить приглашение</h2></div><label>Имя<input name="name" placeholder="Имя и фамилия" required /></label><label>Почта<input name="email" type="email" placeholder="name@gmail.com" required /></label>{canManageMembers ? <label>Роль<select name="role" defaultValue="participant">{(Object.keys(ROLE_LABELS) as Role[]).filter((role) => role !== 'developer').map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label> : <input name="role" type="hidden" value="participant" />}<button className="button button-solid" type="submit">Добавить участника</button></form>}
+  </div><aside className="settings-side"><section className="settings-panel"><p className="eyebrow">Права доступа</p><h2>Роли</h2>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <div className="role-note" key={role}><b>{ROLE_LABELS[role]}</b><p>{ROLE_DESCRIPTIONS[role]}</p></div>)}</section>{canManageMembers && <section className="settings-panel"><p className="eyebrow">Безопасность</p><h2>Общий пароль</h2><form className="password-form" onSubmit={onPassword}><label>Новый пароль<input name="newPassword" type="password" minLength={4} required /></label><button className="button" type="submit">Изменить пароль</button></form></section>}<section className="settings-panel developer-card"><span className="access-chip">Разраб</span><h2>Андрей Комов</h2><a href="mailto:a.s.komow@gmail.com">a.s.komow@gmail.com</a><p>Техническое сопровождение воркхаба.</p></section></aside></section></main>
 }
 
 export default App
