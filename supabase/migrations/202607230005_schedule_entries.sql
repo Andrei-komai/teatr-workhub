@@ -16,14 +16,14 @@ begin
       where old_schedule_id = any(sections);
 
       update public.sections
-      set id = 'schedule', enabled = true
+      set id = 'schedule', enabled = true, description = 'Дата, время классов, педагоги, направление, отсутствие'
       where id = old_schedule_id;
     else
       insert into public.sections (id, title, description, access_roles, enabled, sort_order)
       values ('schedule', 'Расписание классов и репетиций', 'Дата, время классов, педагоги, направление, отсутствие', array['developer', 'leader'], true, 3);
     end if;
   else
-    update public.sections set enabled = true where id = 'schedule';
+    update public.sections set enabled = true, description = 'Дата, время классов, педагоги, направление, отсутствие' where id = 'schedule';
   end if;
 end $$;
 
