@@ -1,5 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
+import { CalendarScreen, ScheduleScreen } from './CalendarScreen'
+import type { CalendarAttachment, CalendarEvent, CalendarEventInput } from './CalendarScreen'
 import { PERSONAL_SESSION_KEY, supabase } from './supabase'
 
 interface BeforeInstallPromptEvent extends Event {
@@ -7,7 +9,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
 
-type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings'
+type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings' | 'calendar' | 'schedule'
 type Role = 'developer' | 'leader' | 'teacher' | 'admin' | 'participant'
 
 type Attachment = { id: string; name: string; size: number; type: string; path?: string; file?: File }
@@ -30,6 +32,7 @@ const HUB_SESSION_KEY = 'tam-hub-session'
 const REACTIONS = ['❤️', '👍', '🔥', '👏', '😁', '👎']
 const DAY = 24 * 60 * 60 * 1000
 const COLLECTION_SECTION = 'collection'
+const CALENDAR_SECTION = 'calendar'
 const DEVELOPER_ID = '00000000-0000-0000-0000-000000000001'
 const PUBLIC_APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
 const CONTENT_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
@@ -60,6 +63,13 @@ function mapMaterial(row: Record<string, unknown>): Material {
     categoryFiles: (row.category_files as Attachment[]) ?? [], description: String(row.description), descriptionFiles: (row.description_files as Attachment[]) ?? [],
     authorId: row.author_id ? String(row.author_id) : null, createdAt: new Date(String(row.created_at)).getTime(), pinned: Boolean(row.pinned),
     reactions: (row.reactions as Record<string, number>) ?? {}, comments: (row.comments as MaterialComment[]) ?? [], deletedAt: row.deleted_at ? new Date(String(row.deleted_at)).getTime() : null,
+  }
+}
+function mapCalendarEvent(row: Record<string, unknown>): CalendarEvent {
+  return {
+    id: String(row.id), title: String(row.title), eventType: String(row.event_type) as CalendarEvent['eventType'], eventDate: String(row.event_date),
+    startTime: String(row.start_time), endTime: row.end_time ? String(row.end_time) : null, description: String(row.description ?? ''),
+    attachments: (row.attachments as CalendarAttachment[]) ?? [], authorId: row.author_id ? String(row.author_id) : null, createdAt: new Date(String(row.created_at)).getTime(),
   }
 }
 
@@ -102,6 +112,7 @@ function App() {
   const [participants, setParticipants] = useState<Participant[]>([])
   const [materials, setMaterials] = useState<Material[]>([])
   const [sections, setSections] = useState<WorkspaceSection[]>([])
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [screen, setScreen] = useState<Screen>('hub')
   const [returnScreen, setReturnScreen] = useState<Screen>('hub')
   const [query, setQuery] = useState('')
@@ -136,16 +147,19 @@ function App() {
   const canOpenCollection = Boolean(profile && (canManageMembers || profile.sections.includes(COLLECTION_SECTION)))
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession) {
-    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); return }
+    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); return }
     const { data: ownProfile, error: profileError } = await supabase.rpc('get_current_profile')
     if (profileError) { setAppError(profileError.message); return }
     setAppError('')
     const mappedProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
     setProfile(mappedProfile)
-    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); return }
+    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); return }
     const { data: sectionRows, error: sectionError } = await supabase.from('sections').select('*').order('sort_order')
     if (sectionError) setAppError(sectionError.message)
     else setSections((sectionRows ?? []).map(mapSection))
+    const { data: eventRows, error: eventError } = await supabase.from('calendar_events').select('*').order('event_date').order('start_time')
+    if (eventError && eventError.code !== 'PGRST205') setAppError(eventError.message)
+    else setCalendarEvents((eventRows ?? []).map(mapCalendarEvent))
     if (['developer', 'leader', 'teacher', 'admin'].includes(mappedProfile.role)) {
       const { data } = await supabase.from('profiles').select('*').order('created_at')
       setParticipants((data ?? []).map(mapParticipant))
@@ -226,6 +240,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => loadData())
       .subscribe()
     return () => { window.clearInterval(refreshTimer); supabase.removeChannel(channel) }
   }, [session?.user.id, personalSession, profile?.role])
@@ -268,7 +283,7 @@ function App() {
     if (personalSession) await supabase.rpc('logout_personal_session')
     localStorage.removeItem(PERSONAL_SESSION_KEY); setPersonalSession(null)
     if (session) await supabase.auth.signOut()
-    setProfile(null); setParticipants([]); setMaterials([]); setScreen('hub')
+    setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScreen('hub')
   }
   function requireAccess(target: Screen) {
     if (!profile) { setReturnScreen(target); setScreen('auth'); return }
@@ -416,6 +431,76 @@ function App() {
     return true
   }
 
+  async function updateSection(id: string, event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canManageMembers) return false
+    const data = new FormData(event.currentTarget)
+    const title = String(data.get('sectionTitle') ?? '').trim().replace(/\s+/g, ' ')
+    const description = String(data.get('sectionDescription') ?? '').trim().replace(/\s+/g, ' ')
+    if (title.length < 2) { setAppError('Введите название раздела'); return false }
+    if (sections.some((section) => section.id !== id && normalize(section.title) === normalize(title))) { setAppError('Раздел с таким названием уже есть'); return false }
+    const { error } = await supabase.from('sections').update({ title, description }).eq('id', id)
+    if (error) { setAppError(error.message); return false }
+    setAppNotice(`Раздел «${title}» обновлён`)
+    await loadData()
+    return true
+  }
+
+  async function deleteSection(section: WorkspaceSection) {
+    if (!canManageMembers) return
+    if (section.id === COLLECTION_SECTION || section.id === CALENDAR_SECTION) { setAppError('Системный раздел можно переименовать, но нельзя удалить.'); return }
+    if (!window.confirm(`Удалить раздел «${section.title}»? Сам раздел исчезнет у всех участников. Это действие нельзя отменить.`)) return
+    const { error } = await supabase.from('sections').delete().eq('id', section.id)
+    if (error) { setAppError(error.message); return }
+    setAppNotice(`Раздел «${section.title}» удалён`)
+    await loadData()
+  }
+
+  async function uploadCalendarFiles(files: CalendarAttachment[], eventId: string) {
+    const result: CalendarAttachment[] = []
+    for (const attachment of files) {
+      if (!attachment.file) { const { file: _file, ...stored } = attachment; result.push(stored); continue }
+      const cleanName = attachment.name.replace(/[^a-zA-Zа-яА-ЯёЁ0-9._-]+/g, '-').slice(-100)
+      const path = `${eventId}/${crypto.randomUUID()}-${cleanName}`
+      const { error } = await supabase.storage.from('calendar').upload(path, attachment.file)
+      if (error) throw error
+      result.push({ id: attachment.id, name: attachment.name, size: attachment.size, type: attachment.type, path })
+    }
+    return result
+  }
+
+  async function saveCalendarEvent(input: CalendarEventInput, initial: CalendarEvent | null) {
+    if (!profile || !CONTENT_MANAGER_ROLES.includes(profile.role)) return false
+    const eventId = initial?.id ?? crypto.randomUUID()
+    try {
+      const attachments = await uploadCalendarFiles(input.attachments, eventId)
+      const payload = { title: input.title, event_type: input.eventType, event_date: input.eventDate, start_time: input.startTime, end_time: input.endTime || null, description: input.description, attachments }
+      const { error } = initial
+        ? await supabase.from('calendar_events').update(payload).eq('id', eventId)
+        : await supabase.from('calendar_events').insert({ id: eventId, ...payload, author_id: profile.id })
+      if (error) throw error
+      const keptPaths = new Set(attachments.flatMap((file) => file.path ? [file.path] : []))
+      const removedPaths = (initial?.attachments ?? []).flatMap((file) => file.path && !keptPaths.has(file.path) ? [file.path] : [])
+      if (removedPaths.length) await supabase.storage.from('calendar').remove(removedPaths)
+      setAppNotice(initial ? 'Событие обновлено' : 'Событие добавлено')
+      await loadData()
+      return true
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Не удалось сохранить событие')
+      return false
+    }
+  }
+
+  async function deleteCalendarEvent(item: CalendarEvent) {
+    if (!CONTENT_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить событие «${item.title}» ${item.eventDate}? Оно исчезнет из календаря и синхронизированного расписания. Это действие нельзя отменить.`)) return
+    const { error } = await supabase.from('calendar_events').delete().eq('id', item.id)
+    if (error) { setAppError(error.message); return }
+    const paths = item.attachments.flatMap((file) => file.path ? [file.path] : [])
+    if (paths.length) await supabase.storage.from('calendar').remove(paths)
+    setAppNotice('Событие удалено')
+    await loadData()
+  }
+
   const installButton = !isInstalled && <button className="text-button install-button" type="button" onClick={installApp}>⇩ Установить</button>
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
   const visibleAppError = /failed to fetch/i.test(appError) ? 'Нет связи с сервером. Проверьте интернет.' : appError
@@ -429,12 +514,14 @@ function App() {
       {appError && <div className="app-alert" role="alert"><span>{visibleAppError}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppError('')}>×</button></div>}
       {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppNotice('')}>×</button></div>}
     </div>}
-    {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onSettings={() => requireAccess('settings')} onCreateSection={createSection} />}
+    {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onSettings={() => requireAccess('settings')} onCreateSection={createSection} onUpdateSection={updateSection} onDeleteSection={deleteSection} />}
     {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
-    {screen === 'collection' && <CollectionScreen materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
+    {screen === 'collection' && <CollectionScreen title={sections.find((section) => section.id === COLLECTION_SECTION)?.title ?? 'Копилка материалов'} description={sections.find((section) => section.id === COLLECTION_SECTION)?.description ?? 'Общие материалы театра'} materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
     {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
     {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
     {screen === 'settings' && <SettingsScreen participants={participants} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} />}
+    {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
+    {screen === 'schedule' && <ScheduleScreen title={sections.find((section) => /расписан/i.test(section.title))?.title ?? 'Расписание занятий'} description={sections.find((section) => /расписан/i.test(section.title))?.description ?? 'Репетиции и показы из календаря репертуара'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
   </div>
 }
 
@@ -443,26 +530,32 @@ function InstallHelp({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><span className="logo-mark small">Т·А·М</span><p className="eyebrow">Установка на телефон</p><h2 id="install-title">Добавить иконку приложения</h2>{isApple ? <ol><li>Откройте меню браузера.</li><li>Выберите <b>Добавить на экран «Домой»</b> или <b>Установить приложение</b>.</li><li>Подтвердите добавление иконки.</li><li>Если ваш браузер не показывает этот пункт, откройте ссылку в другом браузере.</li></ol> : <ol><li>Откройте меню браузера <b>⋮</b>.</li><li>Нажмите <b>Добавить на главный экран</b>.</li><li>Выберите <b>Установить</b> и подтвердите.</li></ol>}<p className="install-note">После этого появится отдельная иконка «Т.А.М.», а приложение будет открываться без адресной строки.</p><button className="button button-solid" type="button" onClick={onClose}>Понятно</button></section></div>
 }
 
-function Hub({ profile, sections, canOpenCollection, canInvite, canManageMembers, canCreateSections, onCollection, onSettings, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canInvite: boolean; canManageMembers: boolean; canCreateSections: boolean; onCollection: () => void; onSettings: () => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
+function Hub({ profile, sections, canOpenCollection, canInvite, canManageMembers, canCreateSections, onCollection, onCalendar, onSchedule, onSettings, onCreateSection, onUpdateSection, onDeleteSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canInvite: boolean; canManageMembers: boolean; canCreateSections: boolean; onCollection: () => void; onCalendar: () => void; onSchedule: () => void; onSettings: () => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean>; onUpdateSection: (id: string, event: FormEvent<HTMLFormElement>) => Promise<boolean>; onDeleteSection: (section: WorkspaceSection) => void }) {
   const [creatingSection, setCreatingSection] = useState(false)
-  const draftSections = sections.filter((section) => section.id !== 'collection' && section.id !== 'calendar' && !section.enabled)
+  const [editingSection, setEditingSection] = useState<string | null>(null)
+  const collectionSection = sections.find((section) => section.id === COLLECTION_SECTION)
+  const calendarSection = sections.find((section) => section.id === CALENDAR_SECTION)
+  const scheduleSection = sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
+  const draftSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && !section.enabled)
   return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><div className="workhub-media" aria-hidden="true"><img className="workhub-poster" src={`${import.meta.env.BASE_URL}workhub-hero.webp`} alt="" /><video className="workhub-video" autoPlay muted loop playsInline preload="metadata" poster={`${import.meta.env.BASE_URL}workhub-hero.webp`}><source src={`${import.meta.env.BASE_URL}workhub-hero.mp4`} type="video/mp4" /></video></div></section><section className="module-grid" aria-label="Разделы театра">
-    <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><span className="module-icon">▦</span><span className="module-copy"><b>Копилка материалов</b><small>Ссылки, файлы, идеи и комментарии</small></span><span className="access-chip">{canOpenCollection ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
-    <button className="module-card" type="button" disabled><span className="module-icon">□</span><span className="module-copy"><b>Календарь репертуара</b><small>Показы, репетиции и события</small></span><span className="access-chip">Все</span><span>→</span></button>
+    <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><span className="module-icon">▦</span><span className="module-copy"><b>{collectionSection?.title ?? 'Копилка материалов'}</b><small>{collectionSection?.description ?? 'Ссылки, файлы, идеи и комментарии'}</small></span><span className="access-chip">{canOpenCollection ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
+    <button className="module-card" type="button" onClick={onCalendar}><span className="module-icon">□</span><span className="module-copy"><b>{calendarSection?.title ?? 'Календарь репертуара'}</b><small>{calendarSection?.description ?? 'Показы, репетиции и события'}</small></span><span className="access-chip">Все</span><span>→</span></button>
     <button className="module-card" type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><span className="module-icon">◎</span><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, личные пароли и общий пароль</small></span><span className="access-chip">{canManageMembers ? 'Управление' : canInvite ? 'Участники' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
+    {scheduleSection && <button className="module-card" type="button" onClick={onSchedule}><span className="module-icon">↻</span><span className="module-copy"><b>{scheduleSection.title}</b><small>{scheduleSection.description || 'Репетиции и показы из календаря'}</small></span><span className="access-chip">Синхронизация</span><span>→</span></button>}
     {draftSections.map((section) => <button className="module-card draft-section" type="button" disabled key={section.id}><span className="module-icon">□</span><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел в подготовке'}</small></span><span className="access-chip">В разработке</span><span>→</span></button>)}
     {canCreateSections && !creatingSection && <button className="module-card" type="button" onClick={() => setCreatingSection(true)}><span className="module-icon">＋</span><span className="module-copy"><b>Новый раздел</b><small>Добавить название будущего раздела</small></span><span className="access-chip">Добавить</span><span>→</span></button>}
     {canCreateSections && creatingSection && <form className="module-card section-create-form" onSubmit={async (event) => { if (await onCreateSection(event)) setCreatingSection(false) }}><span className="module-icon">＋</span><div className="section-create-fields"><b>Новый раздел</b><input name="sectionTitle" placeholder="Название раздела" minLength={2} maxLength={80} autoFocus required /><input name="sectionDescription" placeholder="Краткое описание (необязательно)" maxLength={140} /></div><div className="section-create-actions"><button className="button" type="button" onClick={() => setCreatingSection(false)}>Отмена</button><button className="button button-solid" type="submit">Создать</button></div></form>}
-  </section></main>
+  </section>{canManageMembers && <section className="section-management"><div className="section-management-heading"><div><p className="eyebrow">Настройка</p><h2>Управление разделами</h2></div><small>Названия и описания видят все участники</small></div>{sections.map((section) => <article className="section-management-row" key={section.id}>{editingSection === section.id ? <form onSubmit={async (event) => { if (await onUpdateSection(section.id, event)) setEditingSection(null) }}><label><span>Название</span><input name="sectionTitle" defaultValue={section.title} minLength={2} maxLength={80} required autoFocus /></label><label><span>Описание</span><input name="sectionDescription" defaultValue={section.description} maxLength={140} /></label><div><button className="button" type="button" onClick={() => setEditingSection(null)}>Отмена</button><button className="button button-solid" type="submit">Сохранить</button></div></form> : <><div><b>{section.title}</b><p>{section.description || 'Без описания'}</p></div><span className="access-chip">{section.id === COLLECTION_SECTION || section.id === CALENDAR_SECTION ? 'Системный' : section.enabled ? 'Работает' : 'В разработке'}</span><div className="section-management-actions"><button className="icon-button" type="button" aria-label={`Редактировать раздел ${section.title}`} onClick={() => setEditingSection(section.id)}>✎</button>{section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && <button className="icon-button danger" type="button" aria-label={`Удалить раздел ${section.title}`} onClick={() => onDeleteSection(section)}>×</button>}</div></>}</article>)}</section>}
+  </main>
 }
 
 function AuthScreen({ message, onSubmit, onBack }: { message: string; onSubmit: (event: FormEvent<HTMLFormElement>) => void; onBack: () => void }) {
   return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Личный вход</h1><p>Почта и постоянный личный пароль</p></div></section><form className="auth-form" autoComplete="off" onSubmit={onSubmit}><label>Почта участника<input name="email" type="email" placeholder="name@example.com" autoComplete="off" required autoFocus /></label><label>Личный пароль<input name="personalPassword" type="password" minLength={6} autoComplete="off" required /></label><button className="button button-solid" type="submit">Войти</button>{message && <p className="auth-message" role="status">{message}</p>}</form></main>
 }
 
-type CollectionProps = { materials: Material[]; categories: string[]; activeFilters: string[]; query: string; trashCount: number; canDelete: boolean; reactionMenu: string | null; openComments: string | null; onBack: () => void; onAdd: () => void; onQuery: (value: string) => void; onClear: () => void; onTrashScreen: () => void; onFilter: (category: string) => void; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
+type CollectionProps = { title: string; description: string; materials: Material[]; categories: string[]; activeFilters: string[]; query: string; trashCount: number; canDelete: boolean; reactionMenu: string | null; openComments: string | null; onBack: () => void; onAdd: () => void; onQuery: (value: string) => void; onClear: () => void; onTrashScreen: () => void; onFilter: (category: string) => void; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
 function CollectionScreen(props: CollectionProps) {
-  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={props.onBack}>←</button><div><h1>Копилка материалов</h1><p>Общие материалы театра</p></div><button className="button inverse-button" type="button" onClick={props.onAdd}>＋ Добавить</button></section>
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={props.onBack}>←</button><div><h1>{props.title}</h1><p>{props.description}</p></div><button className="button inverse-button" type="button" onClick={props.onAdd}>＋ Добавить</button></section>
     <section className="collection-tools"><label className="search-box"><span>⌕</span><input value={props.query} onChange={(event) => props.onQuery(event.target.value)} placeholder="Поиск по всем полям" /></label><button className="button" type="button" onClick={props.onClear}>Очистить</button>{props.canDelete && <button className="button" type="button" onClick={props.onTrashScreen}>Корзина{props.trashCount ? ` · ${props.trashCount}` : ''}</button>}</section>
     <section className="filters" aria-label="Фильтры"><span>Фильтр:</span>{props.categories.map((category) => <button className={props.activeFilters.includes(category) ? 'filter active' : 'filter'} type="button" key={category} onClick={() => props.onFilter(category)}>{category}</button>)}</section>
     <section className="materials" aria-live="polite"><div className="desktop-table"><div className="material-row table-head"><span>Важно</span><span>Источник</span><span>Для чего</span><span>Что внутри</span><span>Реакции</span><span></span></div>{props.materials.map((item) => <MaterialRow key={item.id} item={item} mobile={false} {...props} commentsOpen={props.openComments} />)}</div><div className="mobile-cards">{props.materials.map((item) => <MaterialRow key={item.id} item={item} mobile {...props} commentsOpen={props.openComments} />)}</div>{!props.materials.length && <div className="empty-state">Здесь пока нет материалов</div>}</section>
