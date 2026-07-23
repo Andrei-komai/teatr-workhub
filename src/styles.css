@@ -251,6 +251,12 @@ h1, h2, p { margin-top: 0; }
 .settings-main, .settings-side { min-width: 0; }
 .settings-side { display: grid; align-content: start; gap: 12px; }
 .settings-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.settings-tabs-heading { align-items: flex-end; }
+.settings-tabs { display: flex; gap: 18px; max-width: 100%; overflow-x: auto; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+.settings-tabs button { flex: none; padding: 4px 0 9px; border: 0; border-bottom: 3px solid transparent; background: transparent; color: var(--muted); font: inherit; font-size: 1.2rem; font-weight: 750; text-transform: uppercase; cursor: pointer; }
+.settings-tabs button.active { border-bottom-color: var(--ink); color: var(--ink); }
+.settings-tab-panel { min-width: 0; }
+.section-management-note { margin: 0 0 10px; color: var(--muted); line-height: 1.4; }
 .settings-heading h2, .settings-panel h2, .invite-form h2 { margin-bottom: 0; text-transform: uppercase; }
 .settings-heading .eyebrow, .settings-panel .eyebrow, .invite-form .eyebrow { margin-bottom: 4px; }
 .settings-heading > span { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--ink); border-radius: 50%; }
@@ -262,8 +268,11 @@ h1, h2, p { margin-top: 0; }
 .participant-row label, .invite-form label, .password-form label { display: grid; gap: 5px; color: var(--muted); font-size: .78rem; }
 .participant-row select, .participant-password input, .invite-form input, .invite-form select, .password-form input { width: 100%; min-height: 40px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
 .participant-row select:disabled { opacity: 1; background: #ecece8; }
-.section-access { display: flex !important; align-items: center; color: var(--ink) !important; font-size: .86rem !important; }
-.section-access input { width: 19px; height: 19px; }
+.participant-section-access { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: .78rem; }
+.participant-section-list { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.participant-section-list label { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); font-size: .78rem; }
+.participant-section-list input { width: 17px; height: 17px; margin: 0; }
+.participant-section-list input:disabled + span { color: var(--muted); }
 .participant-actions { display: flex; gap: 4px; }
 .participant-password { grid-column: 2 / -1; display: grid; grid-template-columns: minmax(180px, 1fr) auto; align-items: end; gap: 8px; }
 .participant-password label { color: var(--muted); font-size: .78rem; }
@@ -386,6 +395,8 @@ h1, h2, p { margin-top: 0; }
   .trash-row .button { flex: 1; }
   .participant-row { grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; }
   .participant-row > label { grid-column: 2 / -1; }
+  .participant-row > .participant-section-access { grid-column: 2 / -1; }
+  .settings-tabs button { font-size: 1rem; }
   .participant-password { grid-column: 1 / -1; grid-template-columns: 1fr; }
   .participant-actions { grid-column: 3; grid-row: 1; }
   .invite-form { grid-template-columns: 1fr; }
