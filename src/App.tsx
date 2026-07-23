@@ -21,6 +21,9 @@ type Participant = {
   id: string; userId: string | null; name: string; email: string; role: Role
   sections: string[]; status: 'active' | 'invited'
 }
+type WorkspaceSection = {
+  id: string; title: string; description: string; accessRoles: Role[]; enabled: boolean; sortOrder: number
+}
 
 const LEGACY_SESSION_KEY = 'tam-workhub-open'
 const HUB_SESSION_KEY = 'tam-hub-session'
@@ -47,6 +50,9 @@ function fileListToAttachments(files: FileList | null): Attachment[] {
 }
 function mapParticipant(row: Record<string, unknown>): Participant {
   return { id: String(row.id), userId: row.user_id ? String(row.user_id) : null, name: String(row.name), email: String(row.email), role: row.role as Role, sections: (row.sections as string[]) ?? [], status: row.status as 'active' | 'invited' }
+}
+function mapSection(row: Record<string, unknown>): WorkspaceSection {
+  return { id: String(row.id), title: String(row.title), description: String(row.description ?? ''), accessRoles: (row.access_roles as Role[]) ?? [], enabled: Boolean(row.enabled), sortOrder: Number(row.sort_order ?? 0) }
 }
 function mapMaterial(row: Record<string, unknown>): Material {
   return {
@@ -95,6 +101,7 @@ function App() {
   const [profile, setProfile] = useState<Participant | null>(null)
   const [participants, setParticipants] = useState<Participant[]>([])
   const [materials, setMaterials] = useState<Material[]>([])
+  const [sections, setSections] = useState<WorkspaceSection[]>([])
   const [screen, setScreen] = useState<Screen>('hub')
   const [returnScreen, setReturnScreen] = useState<Screen>('hub')
   const [query, setQuery] = useState('')
@@ -117,13 +124,16 @@ function App() {
   const canOpenCollection = Boolean(profile && (canManageMembers || profile.sections.includes(COLLECTION_SECTION)))
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession) {
-    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); return }
+    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); return }
     const { data: ownProfile, error: profileError } = await supabase.rpc('get_current_profile')
     if (profileError) { setAppError(profileError.message); return }
     setAppError('')
     const mappedProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
     setProfile(mappedProfile)
-    if (!mappedProfile) { setParticipants([]); setMaterials([]); return }
+    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); return }
+    const { data: sectionRows, error: sectionError } = await supabase.from('sections').select('*').order('sort_order')
+    if (sectionError) setAppError(sectionError.message)
+    else setSections((sectionRows ?? []).map(mapSection))
     if (['developer', 'leader', 'teacher', 'admin'].includes(mappedProfile.role)) {
       const { data } = await supabase.from('profiles').select('*').order('created_at')
       setParticipants((data ?? []).map(mapParticipant))
@@ -203,6 +213,7 @@ function App() {
     const channel = supabase.channel('workhub-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => loadData())
       .subscribe()
     return () => { window.clearInterval(refreshTimer); supabase.removeChannel(channel) }
   }, [session?.user.id, personalSession, profile?.role])
@@ -368,6 +379,31 @@ function App() {
     setShowInstallHelp(true)
   }
 
+  async function createSection(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canCreateSections) return false
+    const form = new FormData(event.currentTarget)
+    const title = String(form.get('sectionTitle') ?? '').trim().replace(/\s+/g, ' ')
+    const description = String(form.get('sectionDescription') ?? '').trim().replace(/\s+/g, ' ')
+    if (title.length < 2) { setAppError('Введите название раздела'); return false }
+    if (sections.some((section) => normalize(section.title) === normalize(title))) { setAppError('Раздел с таким названием уже есть'); return false }
+
+    const nextSortOrder = Math.max(0, ...sections.map((section) => section.sortOrder)) + 1
+    const { error } = await supabase.from('sections').insert({
+      id: `draft-${crypto.randomUUID()}`,
+      title,
+      description: description || 'Раздел в подготовке',
+      access_roles: ['developer', 'leader'],
+      enabled: false,
+      sort_order: nextSortOrder,
+    })
+    if (error) { setAppError(error.message); return false }
+    setAppError('')
+    setAppNotice(`Раздел «${title}» добавлен как заготовка`)
+    await loadData()
+    return true
+  }
+
   const installButton = !isInstalled && <button className="text-button install-button" type="button" onClick={installApp}>⇩ Установить</button>
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
 
@@ -378,7 +414,7 @@ function App() {
     {installHelp}
     {appError && <div className="app-alert" role="alert"><span>{appError}</span><button type="button" onClick={() => setAppError('')}>×</button></div>}
     {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" onClick={() => setAppNotice('')}>×</button></div>}
-    {screen === 'hub' && <Hub profile={profile} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onSettings={() => requireAccess('settings')} />}
+    {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onSettings={() => requireAccess('settings')} onCreateSection={createSection} />}
     {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
     {screen === 'collection' && <CollectionScreen materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
     {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
@@ -392,12 +428,16 @@ function InstallHelp({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><span className="logo-mark small">Т·А·М</span><p className="eyebrow">Установка на телефон</p><h2 id="install-title">Добавить иконку приложения</h2>{isApple ? <ol><li>Откройте меню браузера.</li><li>Выберите <b>Добавить на экран «Домой»</b> или <b>Установить приложение</b>.</li><li>Подтвердите добавление иконки.</li><li>Если ваш браузер не показывает этот пункт, откройте ссылку в другом браузере.</li></ol> : <ol><li>Откройте меню браузера <b>⋮</b>.</li><li>Нажмите <b>Добавить на главный экран</b>.</li><li>Выберите <b>Установить</b> и подтвердите.</li></ol>}<p className="install-note">После этого появится отдельная иконка «Т.А.М.», а приложение будет открываться без адресной строки.</p><button className="button button-solid" type="button" onClick={onClose}>Понятно</button></section></div>
 }
 
-function Hub({ profile, canOpenCollection, canInvite, canManageMembers, canCreateSections, onCollection, onSettings }: { profile: Participant | null; canOpenCollection: boolean; canInvite: boolean; canManageMembers: boolean; canCreateSections: boolean; onCollection: () => void; onSettings: () => void }) {
+function Hub({ profile, sections, canOpenCollection, canInvite, canManageMembers, canCreateSections, onCollection, onSettings, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canInvite: boolean; canManageMembers: boolean; canCreateSections: boolean; onCollection: () => void; onSettings: () => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
+  const [creatingSection, setCreatingSection] = useState(false)
+  const draftSections = sections.filter((section) => section.id !== 'collection' && section.id !== 'calendar' && !section.enabled)
   return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><div className="workhub-media" aria-hidden="true"><img className="workhub-poster" src={`${import.meta.env.BASE_URL}workhub-hero.webp`} alt="" /><video className="workhub-video" autoPlay muted loop playsInline preload="metadata" poster={`${import.meta.env.BASE_URL}workhub-hero.webp`}><source src={`${import.meta.env.BASE_URL}workhub-hero.mp4`} type="video/mp4" /></video></div></section><section className="module-grid" aria-label="Разделы театра">
     <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><span className="module-icon">▦</span><span className="module-copy"><b>Копилка материалов</b><small>Ссылки, файлы, идеи и комментарии</small></span><span className="access-chip">{canOpenCollection ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
     <button className="module-card" type="button" disabled><span className="module-icon">□</span><span className="module-copy"><b>Календарь репертуара</b><small>Показы, репетиции и события</small></span><span className="access-chip">Все</span><span>→</span></button>
     <button className="module-card" type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><span className="module-icon">◎</span><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, личные пароли и общий пароль</small></span><span className="access-chip">{canManageMembers ? 'Управление' : canInvite ? 'Участники' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
-    {canCreateSections && <div className="module-card muted"><span className="module-icon">＋</span><span className="module-copy"><b>Новый раздел</b><small>Создавать разделы могут руководитель и разраб</small></span><span className="access-chip">Позже</span></div>}
+    {draftSections.map((section) => <button className="module-card draft-section" type="button" disabled key={section.id}><span className="module-icon">□</span><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел в подготовке'}</small></span><span className="access-chip">В разработке</span><span>→</span></button>)}
+    {canCreateSections && !creatingSection && <button className="module-card" type="button" onClick={() => setCreatingSection(true)}><span className="module-icon">＋</span><span className="module-copy"><b>Новый раздел</b><small>Добавить название будущего раздела</small></span><span className="access-chip">Добавить</span><span>→</span></button>}
+    {canCreateSections && creatingSection && <form className="module-card section-create-form" onSubmit={async (event) => { if (await onCreateSection(event)) setCreatingSection(false) }}><span className="module-icon">＋</span><div className="section-create-fields"><b>Новый раздел</b><input name="sectionTitle" placeholder="Название раздела" minLength={2} maxLength={80} autoFocus required /><input name="sectionDescription" placeholder="Краткое описание (необязательно)" maxLength={140} /></div><div className="section-create-actions"><button className="button" type="button" onClick={() => setCreatingSection(false)}>Отмена</button><button className="button button-solid" type="submit">Создать</button></div></form>}
   </section></main>
 }
 
