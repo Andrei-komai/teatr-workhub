@@ -24,7 +24,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 h1, h2, p { margin-top: 0; }
 
 .app-shell { width: min(1280px, 100%); min-height: 100vh; margin: 0 auto; padding: max(18px, env(safe-area-inset-top)) 18px 18px; background: var(--paper); }
-.app-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; background: var(--ink); color: var(--paper); }
+.app-header { position: sticky; top: max(18px, env(safe-area-inset-top)); z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; background: var(--ink); color: var(--paper); }
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .brand > span:last-child { display: grid; gap: 2px; }
 .brand b { font-weight: 650; }
@@ -49,7 +49,10 @@ h1, h2, p { margin-top: 0; }
 .work-header p { margin: 0; color: #c9c9c3; }
 .hub-hero { height: 158px; min-height: 158px; align-items: stretch; padding: 0 0 0 24px; overflow: hidden; }
 .hub-hero > div { display: flex; flex: 1 1 42%; flex-direction: column; justify-content: center; min-width: 300px; padding-right: 22px; }
-.workhub-cover { display: block; width: min(58%, 700px); height: 158px; min-height: 158px; border-left: 1px solid #4c4c4c; background: #13140c; object-fit: contain; object-position: center; }
+.workhub-media { position: relative; width: min(58%, 700px); height: 158px; min-height: 158px; overflow: hidden; border-left: 1px solid #4c4c4c; background: var(--ink); }
+.workhub-poster, .workhub-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; mix-blend-mode: screen; }
+.workhub-poster { display: none; }
+.workhub-video { display: block; }
 .eyebrow { margin-bottom: 8px; text-transform: uppercase; letter-spacing: .14em; font-size: .76rem; }
 .eyebrow.inverse { color: #c9c9c3; }
 
@@ -197,14 +200,14 @@ h1, h2, p { margin-top: 0; }
 @media (max-width: 800px) {
   input, textarea, select { font-size: 16px; }
   .app-shell { padding: max(12px, env(safe-area-inset-top)) 0 max(12px, env(safe-area-inset-bottom)); }
-  .app-header { padding: 10px 12px; }
+  .app-header { top: max(12px, env(safe-area-inset-top)); padding: 10px 12px; }
   .brand b { font-size: .9rem; }
   .brand small { font-size: .76rem; }
   .user-chip { font-size: .88rem; }
   .work-header { margin-top: 10px; padding: 16px 14px; }
   .hub-hero { height: 142px; min-height: 142px; padding: 0 0 0 16px; }
   .hub-hero > div { min-width: 230px; padding-right: 14px; }
-  .workhub-cover { width: 48%; height: 142px; min-height: 142px; }
+  .workhub-media { width: 48%; height: 142px; min-height: 142px; }
   .module-grid, .collection-tools, .filters, .materials, .material-form, .trash-list, .settings-grid { margin-left: 12px; margin-right: 12px; }
   .module-grid { grid-template-columns: 1fr; }
   .desktop-table { display: none; }
@@ -226,7 +229,7 @@ h1, h2, p { margin-top: 0; }
   .work-header.compact { display: grid; grid-template-columns: auto 1fr; }
   .hub-hero { display: grid; height: auto; grid-template-columns: 1fr; padding: 0; }
   .hub-hero > div { min-width: 0; padding: 18px 14px; }
-  .workhub-cover { width: 100%; height: 112px; min-height: 112px; border-top: 1px solid #4c4c4c; border-left: 0; object-position: center; }
+  .workhub-media { width: 100%; height: 112px; min-height: 112px; border-top: 1px solid #4c4c4c; border-left: 0; }
   .work-header.compact .inverse-button { grid-column: 1 / -1; width: 100%; margin-left: 0; }
   .module-card { grid-template-columns: auto minmax(0, 1fr) auto; }
   .module-card .module-icon { grid-column: 1; grid-row: 1 / span 2; }
@@ -247,4 +250,9 @@ h1, h2, p { margin-top: 0; }
   .participant-actions { grid-column: 3; grid-row: 1; }
   .invite-form { grid-template-columns: 1fr; }
   .invite-form > div { grid-column: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workhub-video { display: none; }
+  .workhub-poster { display: block; }
 }
