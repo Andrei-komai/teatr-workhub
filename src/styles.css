@@ -86,6 +86,7 @@ h1, h2, p { margin-top: 0; }
 .section-management-row form label { display: grid; gap: 5px; color: var(--muted); font-size: .78rem; }
 .section-management-row form input { width: 100%; min-height: 40px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
 .section-management-row form > div { display: flex; gap: 7px; }
+.settings-section-management { margin-right: 0; margin-left: 0; }
 
 .button, .icon-button, .text-button, .filter { border: 1px solid var(--line); background: transparent; cursor: pointer; }
 .button { min-height: 38px; padding: 7px 12px; border-radius: 8px; }
@@ -305,6 +306,7 @@ h1, h2, p { margin-top: 0; }
   .workhub-media { width: 48%; height: 142px; min-height: 142px; }
   .module-grid, .collection-tools, .filters, .materials, .material-form, .trash-list, .settings-grid { margin-left: 12px; margin-right: 12px; }
   .section-management, .calendar-shell, .schedule-sync-note, .schedule-list { margin-left: 12px; margin-right: 12px; }
+  .settings-section-management { margin-left: 0; margin-right: 0; }
   .module-grid { grid-template-columns: 1fr; }
   .section-management-row form { grid-template-columns: 1fr; }
   .section-management-row form > div { justify-content: flex-end; }
