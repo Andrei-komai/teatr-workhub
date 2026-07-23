@@ -116,6 +116,18 @@ function App() {
   const [showInstallHelp, setShowInstallHelp] = useState(false)
   const [isInstalled, setIsInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches || ('standalone' in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone)))
 
+  useEffect(() => {
+    if (!appError) return
+    const timer = window.setTimeout(() => setAppError(''), 7000)
+    return () => window.clearTimeout(timer)
+  }, [appError])
+
+  useEffect(() => {
+    if (!appNotice) return
+    const timer = window.setTimeout(() => setAppNotice(''), 4500)
+    return () => window.clearTimeout(timer)
+  }, [appNotice])
+
   const currentRole: Role = profile?.role ?? 'participant'
   const canManageMembers = currentRole === 'developer' || currentRole === 'leader'
   const canInvite = CONTENT_MANAGER_ROLES.includes(currentRole)
@@ -406,14 +418,17 @@ function App() {
 
   const installButton = !isInstalled && <button className="text-button install-button" type="button" onClick={installApp}>⇩ Установить</button>
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
+  const visibleAppError = /failed to fetch/i.test(appError) ? 'Нет связи с сервером. Проверьте интернет.' : appError
 
   if (hubAccess !== 'unlocked') return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1>{hubAccess === 'checking' ? <p>Проверяем доступ…</p> : <form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>}{installButton}</section>{installHelp}</main>
 
   return <div className="app-shell">
     <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip"><span aria-hidden="true">○</span><span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{profile ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Личный вход</button>}</div></header>
     {installHelp}
-    {appError && <div className="app-alert" role="alert"><span>{appError}</span><button type="button" onClick={() => setAppError('')}>×</button></div>}
-    {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" onClick={() => setAppNotice('')}>×</button></div>}
+    {(appError || appNotice) && <div className="app-toast-stack" aria-live="polite">
+      {appError && <div className="app-alert" role="alert"><span>{visibleAppError}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppError('')}>×</button></div>}
+      {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppNotice('')}>×</button></div>}
+    </div>}
     {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canInvite={canInvite} canManageMembers={canManageMembers} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onSettings={() => requireAccess('settings')} onCreateSection={createSection} />}
     {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
     {screen === 'collection' && <CollectionScreen materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}

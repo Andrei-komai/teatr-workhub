@@ -38,9 +38,11 @@ h1, h2, p { margin-top: 0; }
 .header-logout { color: var(--paper); border-color: #656564; }
 .install-button { color: var(--paper); border-color: #656564; white-space: nowrap; }
 .gate-panel > .install-button { width: 100%; margin-top: 12px; color: var(--paper); border-color: #656564; }
-.app-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; padding: 10px 12px; border: 1px solid #9a221f; background: #f8e4e1; color: #7b1916; }
+.app-toast-stack { position: fixed; right: 22px; bottom: max(22px, env(safe-area-inset-bottom)); z-index: 100; display: grid; gap: 8px; width: min(410px, calc(100vw - 44px)); pointer-events: none; }
+.app-alert { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border: 1px solid #9a221f; border-radius: 8px; background: #f8e4e1; color: #7b1916; box-shadow: 0 10px 30px rgba(19, 20, 12, .18); pointer-events: auto; animation: toast-in .18s ease-out; }
 .app-alert.success { border-color: #47715a; background: #e3efe7; color: #244a34; }
 .app-alert button { border: 0; background: transparent; color: inherit; font-size: 1.25rem; cursor: pointer; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
 .work-header { min-height: 126px; display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-top: 16px; padding: 20px; background: var(--ink); color: var(--paper); }
 .work-header.compact { min-height: auto; align-items: center; justify-content: flex-start; }
@@ -204,6 +206,7 @@ h1, h2, p { margin-top: 0; }
 .form-error { margin: 0; color: #ffaaa6; }
 
 @media (max-width: 800px) {
+  .app-toast-stack { right: 12px; bottom: max(12px, env(safe-area-inset-bottom)); left: 12px; width: auto; }
   input, textarea, select { font-size: 16px; }
   .app-shell { padding: max(12px, env(safe-area-inset-top)) 0 max(12px, env(safe-area-inset-bottom)); }
   .app-header { top: max(12px, env(safe-area-inset-top)); padding: 10px 12px; }
