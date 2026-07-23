@@ -43,6 +43,8 @@ h1, h2, p { margin-top: 0; }
 .profile-avatar-hint { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0; background: rgb(19 20 12 / .74); color: #fff; font-size: .53rem; font-weight: 650; transition: opacity .15s ease; }
 .profile-avatar-picker:hover .profile-avatar-hint, .profile-avatar-picker:focus-within .profile-avatar-hint { opacity: 1; }
 .profile-avatar-picker.uploading { cursor: wait; opacity: .78; }
+.profile-notification-button { display: grid; flex: 0 0 auto; place-items: center; width: 32px; height: 32px; padding: 5px; border: 1px solid #656564; border-radius: 50%; background: transparent; color: var(--paper); cursor: pointer; }
+.profile-notification-button svg { width: 19px; height: 19px; }
 .header-logout { color: var(--paper); border-color: #656564; }
 .install-button { color: var(--paper); border-color: #656564; white-space: nowrap; }
 .gate-panel > .install-button { width: 100%; margin-top: 12px; color: var(--paper); border-color: #656564; }
@@ -113,6 +115,18 @@ h1, h2, p { margin-top: 0; }
 
 .modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / .72); }
 .install-modal { position: relative; width: min(480px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
+.notification-modal { position: relative; width: min(620px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
+.notification-modal h2 { margin-bottom: 8px; text-transform: uppercase; }
+.notification-intro { margin-bottom: 18px; color: var(--muted); line-height: 1.45; }
+.notification-device { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px; border: 1px solid var(--ink); border-radius: 10px; background: #fff; }
+.notification-device > div { display: grid; gap: 3px; }
+.notification-device small, .notification-options small { color: var(--muted); }
+.notification-options { display: grid; margin-top: 14px; border-top: 1px solid var(--line); }
+.notification-options label { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 14px 2px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.notification-options label > span { display: grid; gap: 3px; }
+.notification-options input { flex: 0 0 auto; width: 22px; height: 22px; accent-color: var(--ink); }
+.notification-save { width: 100%; margin-top: 16px; }
+.notification-help { margin: 12px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.4; }
 .install-modal .logo-mark { width: 64px; margin-bottom: 18px; font-size: .85rem; letter-spacing: -.04em; }
 .install-modal h2 { margin-bottom: 16px; text-transform: uppercase; }
 .install-modal ol { display: grid; gap: 10px; padding-left: 24px; line-height: 1.45; }
@@ -401,6 +415,8 @@ h1, h2, p { margin-top: 0; }
   .header-logout { font-size: .76rem; }
   .account-area > .install-button { order: 3; font-size: .76rem; }
   .install-modal { padding: 20px 18px; }
+  .notification-modal { padding: 20px 16px; }
+  .notification-device { align-items: stretch; flex-direction: column; }
   .work-header.compact { display: grid; grid-template-columns: auto 1fr; }
   .hub-hero { display: grid; height: auto; grid-template-columns: 1fr; padding: 0; }
   .hub-hero > div { min-width: 0; padding: 18px 14px; }

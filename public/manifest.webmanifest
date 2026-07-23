@@ -2,6 +2,7 @@
   "name": "Камерный театр-лаборатория Т.А.М.",
   "short_name": "Т.А.М.",
   "description": "Рабочий воркхаб камерного театра-лаборатории Т.А.М.",
+  "id": "/teatr-workhub/",
   "start_url": "/teatr-workhub/",
   "display": "standalone",
   "background_color": "#f6f6f3",

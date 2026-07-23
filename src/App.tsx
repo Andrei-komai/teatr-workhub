@@ -9,7 +9,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
 
-type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings' | 'calendar' | 'schedule'
+type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings' | 'calendar' | 'schedule' | 'custom'
 type Role = 'developer' | 'leader' | 'teacher' | 'admin' | 'participant'
 
 type Attachment = { id: string; name: string; size: number; type: string; path?: string; file?: File }
@@ -26,6 +26,13 @@ type Participant = {
 type WorkspaceSection = {
   id: string; title: string; description: string; accessRoles: Role[]; enabled: boolean; sortOrder: number
 }
+type NotificationPreferences = {
+  eventsEnabled: boolean
+  classesEnabled: boolean
+  messagesEnabled: boolean
+  reminderMinutes: number
+  deviceCount: number
+}
 
 const LEGACY_SESSION_KEY = 'tam-workhub-open'
 const HUB_SESSION_KEY = 'tam-hub-session'
@@ -36,6 +43,7 @@ const CALENDAR_SECTION = 'calendar'
 const SCHEDULE_SECTION = 'schedule'
 const DEVELOPER_ID = '00000000-0000-0000-0000-000000000001'
 const PUBLIC_APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
+const VAPID_PUBLIC_KEY = 'BENd3hUj0b-6-mRiIH81DsxOoA8ALkqT_c9RVU6CJHmmf3jblkTeRvFNEyri15fbAjBFhDrtSP8Ngis38_ddfPc'
 const CONTENT_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
 const ROLE_LABELS: Record<Role, string> = { developer: 'Разраб', leader: 'Руководитель', teacher: 'Педагог', admin: 'Админ', participant: 'Участник' }
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
@@ -44,6 +52,23 @@ const ROLE_DESCRIPTIONS: Record<Role, string> = {
   teacher: 'Работа с материалами, календарём и доступными по роли разделами.',
   admin: 'Работа с материалами, календарём и доступными по роли разделами.',
   participant: 'Работа в доступных разделах без удаления материалов.',
+}
+
+function mapNotificationPreferences(value: Record<string, unknown>): NotificationPreferences {
+  return {
+    eventsEnabled: value.events_enabled !== false,
+    classesEnabled: value.classes_enabled !== false,
+    messagesEnabled: value.messages_enabled !== false,
+    reminderMinutes: Number(value.reminder_minutes ?? 120),
+    deviceCount: Number(value.device_count ?? 0),
+  }
+}
+
+function urlBase64ToUint8Array(value: string) {
+  const padding = '='.repeat((4 - value.length % 4) % 4)
+  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
+  const raw = atob(base64)
+  return Uint8Array.from(Array.from(raw, (character) => character.charCodeAt(0)))
 }
 
 function normalize(value: string) { return value.trim().replace(/\s+/g, ' ').toLocaleLowerCase('ru-RU') }
@@ -169,6 +194,11 @@ function App() {
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [showInstallHelp, setShowInstallHelp] = useState(false)
   const [uploadingAvatar, setUploadingAvatar] = useState(false)
+  const [activeSection, setActiveSection] = useState<WorkspaceSection | null>(null)
+  const [showNotificationSettings, setShowNotificationSettings] = useState(false)
+  const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences | null>(null)
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>(() => 'Notification' in window ? Notification.permission : 'default')
+  const [savingNotifications, setSavingNotifications] = useState(false)
   const [isInstalled, setIsInstalled] = useState(() => window.matchMedia('(display-mode: standalone)').matches || ('standalone' in navigator && Boolean((navigator as Navigator & { standalone?: boolean }).standalone)))
 
   useEffect(() => {
@@ -345,6 +375,20 @@ function App() {
     if (target === 'settings' && !canInvite) { setAppError('Для вашей роли нет доступа к настройкам участников.'); return }
     setScreen(target)
   }
+  function openCustomSection(section: WorkspaceSection) {
+    if (!profile) {
+      setReturnScreen('hub')
+      setAuthMessage('Войдите в личный профиль, чтобы открыть раздел.')
+      setScreen('auth')
+      return
+    }
+    if (!profileHasSectionAccess(profile, section.id, sections)) {
+      setAppError('Для вашего профиля этот раздел недоступен.')
+      return
+    }
+    setActiveSection(section)
+    setScreen('custom')
+  }
   async function uploadFiles(files: Attachment[], materialId: string, field: string) {
     const result: Attachment[] = []
     for (const attachment of files) {
@@ -477,6 +521,89 @@ function App() {
     setUploadingAvatar(false)
   }
 
+  async function openNotificationSettings() {
+    if (!profile) return
+    setShowNotificationSettings(true)
+    const { data, error } = await supabase.rpc('get_own_notification_settings')
+    if (error) { setAppError(error.message); return }
+    setNotificationPreferences(mapNotificationPreferences(data as Record<string, unknown>))
+    if ('Notification' in window) setNotificationPermission(Notification.permission)
+  }
+
+  async function saveNotificationPreferences(next: NotificationPreferences) {
+    if (!profile || savingNotifications) return
+    setSavingNotifications(true)
+    const { data, error } = await supabase.rpc('set_own_notification_preferences', {
+      enable_events: next.eventsEnabled,
+      enable_classes: next.classesEnabled,
+      enable_messages: next.messagesEnabled,
+    })
+    setSavingNotifications(false)
+    if (error) { setAppError(error.message); return }
+    setNotificationPreferences(mapNotificationPreferences(data as Record<string, unknown>))
+    setAppNotice('Настройки уведомлений сохранены')
+  }
+
+  async function enablePushNotifications() {
+    if (!profile || savingNotifications) return
+    if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setAppError('На этом устройстве системные уведомления не поддерживаются. На iPhone установите воркхаб на экран «Домой» и откройте его с иконки.')
+      return
+    }
+    setSavingNotifications(true)
+    try {
+      const permission = await Notification.requestPermission()
+      setNotificationPermission(permission)
+      if (permission !== 'granted') {
+        setAppError('Уведомления не разрешены. Их можно включить в настройках телефона.')
+        return
+      }
+      const registration = await navigator.serviceWorker.ready
+      const existing = await registration.pushManager.getSubscription()
+      const subscription = existing ?? await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+      })
+      const json = subscription.toJSON()
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) throw new Error('Не удалось получить данные устройства.')
+      const { error } = await supabase.rpc('save_own_push_subscription', {
+        subscription_endpoint: json.endpoint,
+        subscription_p256dh: json.keys.p256dh,
+        subscription_auth: json.keys.auth,
+        subscription_user_agent: navigator.userAgent,
+      })
+      if (error) throw error
+      const { data } = await supabase.rpc('get_own_notification_settings')
+      if (data) setNotificationPreferences(mapNotificationPreferences(data as Record<string, unknown>))
+      setAppNotice('Системные уведомления включены на этом устройстве')
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Не удалось включить уведомления.')
+    } finally {
+      setSavingNotifications(false)
+    }
+  }
+
+  async function disablePushNotifications() {
+    if (!profile || savingNotifications || !('serviceWorker' in navigator)) return
+    setSavingNotifications(true)
+    try {
+      const registration = await navigator.serviceWorker.ready
+      const subscription = await registration.pushManager.getSubscription()
+      if (subscription) {
+        await supabase.rpc('remove_own_push_subscription', { subscription_endpoint: subscription.endpoint })
+        await subscription.unsubscribe()
+      }
+      const { data } = await supabase.rpc('get_own_notification_settings')
+      if (data) setNotificationPreferences(mapNotificationPreferences(data as Record<string, unknown>))
+      setNotificationPermission('default')
+      setAppNotice('Уведомления на этом устройстве отключены')
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Не удалось отключить уведомления.')
+    } finally {
+      setSavingNotifications(false)
+    }
+  }
+
   async function createSection(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!canCreateSections) return false
@@ -598,13 +725,14 @@ function App() {
   if (hubAccess !== 'unlocked') return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1>{hubAccess === 'checking' ? <p>Проверяем доступ…</p> : <form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>}{installButton}</section>{installHelp}</main>
 
   return <div className="app-shell">
-    <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip">{profile ? <ParticipantAvatar participant={profile} editable uploading={uploadingAvatar} onSelect={uploadOwnAvatar} /> : <span className="header-avatar-fallback">О</span>}<span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{profile ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Личный вход</button>}</div></header>
+    <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip">{profile && <button className="profile-notification-button" type="button" aria-label="Настройки уведомлений" onClick={openNotificationSettings}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></svg></button>}{profile ? <ParticipantAvatar participant={profile} editable uploading={uploadingAvatar} onSelect={uploadOwnAvatar} /> : <span className="header-avatar-fallback">О</span>}<span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{profile ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Личный вход</button>}</div></header>
     {installHelp}
+    {showNotificationSettings && profile && <NotificationSettings preferences={notificationPreferences} permission={notificationPermission} saving={savingNotifications} onChange={setNotificationPreferences} onSave={saveNotificationPreferences} onEnable={enablePushNotifications} onDisable={disablePushNotifications} onClose={() => setShowNotificationSettings(false)} />}
     {(appError || appNotice) && <div className="app-toast-stack" aria-live="polite">
       {appError && <div className="app-alert" role="alert"><span>{visibleAppError}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppError('')}>×</button></div>}
       {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppNotice('')}>×</button></div>}
     </div>}
-    {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canOpenCalendar={canOpenCalendar} canOpenSchedule={canOpenSchedule} canInvite={canInvite} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onSettings={() => requireAccess('settings')} onCreateSection={createSection} />}
+    {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canOpenCalendar={canOpenCalendar} canOpenSchedule={canOpenSchedule} canInvite={canInvite} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onSettings={() => requireAccess('settings')} onSection={openCustomSection} onCreateSection={createSection} />}
     {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
     {screen === 'collection' && <CollectionScreen title={sections.find((section) => section.id === COLLECTION_SECTION)?.title ?? 'Копилка материалов'} description={sections.find((section) => section.id === COLLECTION_SECTION)?.description ?? 'Общие материалы театра'} materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
     {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
@@ -612,6 +740,7 @@ function App() {
     {screen === 'settings' && <SettingsScreen participants={participants} sections={sections} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} onUpdateSection={updateSection} onDeleteSection={deleteSection} />}
     {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
     {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} />}
+    {screen === 'custom' && activeSection && <CustomSectionScreen section={activeSection} onBack={() => setScreen('hub')} />}
   </div>
 }
 
@@ -620,12 +749,16 @@ function InstallHelp({ onClose }: { onClose: () => void }) {
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="install-modal" role="dialog" aria-modal="true" aria-labelledby="install-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><span className="logo-mark small">Т·А·М</span><p className="eyebrow">Установка на телефон</p><h2 id="install-title">Добавить иконку приложения</h2>{isApple ? <ol><li>Откройте меню браузера.</li><li>Выберите <b>Добавить на экран «Домой»</b> или <b>Установить приложение</b>.</li><li>Подтвердите добавление иконки.</li><li>Если ваш браузер не показывает этот пункт, откройте ссылку в другом браузере.</li></ol> : <ol><li>Откройте меню браузера <b>⋮</b>.</li><li>Нажмите <b>Добавить на главный экран</b>.</li><li>Выберите <b>Установить</b> и подтвердите.</li></ol>}<p className="install-note">После этого появится отдельная иконка «Т.А.М.», а приложение будет открываться без адресной строки.</p><button className="button button-solid" type="button" onClick={onClose}>Понятно</button></section></div>
 }
 
-function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSchedule, canInvite, canCreateSections, onCollection, onCalendar, onSchedule, onSettings, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canOpenCalendar: boolean; canOpenSchedule: boolean; canInvite: boolean; canCreateSections: boolean; onCollection: () => void; onCalendar: () => void; onSchedule: () => void; onSettings: () => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
+function NotificationSettings({ preferences, permission, saving, onChange, onSave, onEnable, onDisable, onClose }: { preferences: NotificationPreferences | null; permission: NotificationPermission; saving: boolean; onChange: (value: NotificationPreferences) => void; onSave: (value: NotificationPreferences) => void; onEnable: () => void; onDisable: () => void; onClose: () => void }) {
+  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="notification-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><p className="eyebrow">Личные настройки</p><h2 id="notification-title">Уведомления</h2><p className="notification-intro">Напоминания о календаре и классах приходят за 2 часа. Каждый пользователь настраивает их только для себя.</p>{preferences ? <><div className="notification-device"><div><b>{permission === 'granted' ? 'Уведомления разрешены' : permission === 'denied' ? 'Уведомления запрещены телефоном' : 'Уведомления на устройстве не включены'}</b><small>Подключённых устройств: {preferences.deviceCount}</small></div>{permission === 'granted' ? <button className="button" type="button" disabled={saving} onClick={onDisable}>Отключить на этом устройстве</button> : <button className="button button-solid" type="button" disabled={saving || permission === 'denied'} onClick={onEnable}>Включить на этом устройстве</button>}</div><div className="notification-options"><label><span><b>События, показы и репетиции</b><small>Всё, что добавлено в календарь репертуара</small></span><input type="checkbox" checked={preferences.eventsEnabled} onChange={(event) => onChange({ ...preferences, eventsEnabled: event.target.checked })} /></label><label><span><b>Классы</b><small>Записи из расписания классов и репетиций</small></span><input type="checkbox" checked={preferences.classesEnabled} onChange={(event) => onChange({ ...preferences, classesEnabled: event.target.checked })} /></label><label><span><b>Сообщения в беседах</b><small>Будет использоваться мессенджером</small></span><input type="checkbox" checked={preferences.messagesEnabled} onChange={(event) => onChange({ ...preferences, messagesEnabled: event.target.checked })} /></label></div><button className="button button-solid notification-save" type="button" disabled={saving} onClick={() => onSave(preferences)}>{saving ? 'Сохраняем…' : 'Сохранить настройки'}</button><p className="notification-help">На iPhone уведомления работают у воркхаба, установленного на экран «Домой». Разрешение запрашивается только после нажатия кнопки выше.</p></> : <p>Загружаем настройки…</p>}</section></div>
+}
+
+function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSchedule, canInvite, canCreateSections, onCollection, onCalendar, onSchedule, onSettings, onSection, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canOpenCalendar: boolean; canOpenSchedule: boolean; canInvite: boolean; canCreateSections: boolean; onCollection: () => void; onCalendar: () => void; onSchedule: () => void; onSettings: () => void; onSection: (section: WorkspaceSection) => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
   const [creatingSection, setCreatingSection] = useState(false)
   const collectionSection = sections.find((section) => section.id === COLLECTION_SECTION)
   const calendarSection = sections.find((section) => section.id === CALENDAR_SECTION)
   const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
-  const draftSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && !section.enabled)
+  const customSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id)
   const accessLabel = (allowed: boolean) => !profile ? 'Личный вход' : !allowed ? 'Нет доступа' : profile.role === 'participant' ? 'Только просмотр' : 'Есть доступ'
   const unavailableClass = (allowed: boolean) => `module-card${profile && !allowed ? ' unavailable' : ''}`
   return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><div className="workhub-media" aria-hidden="true"><img className="workhub-poster" src={`${import.meta.env.BASE_URL}workhub-hero.webp`} alt="" /><video className="workhub-video" autoPlay muted loop playsInline preload="metadata" poster={`${import.meta.env.BASE_URL}workhub-hero.webp`}><source src={`${import.meta.env.BASE_URL}workhub-hero.mp4`} type="video/mp4" /></video></div></section><section className="module-grid" aria-label="Разделы театра">
@@ -633,10 +766,14 @@ function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSch
     {calendarSection && <button className={unavailableClass(canOpenCalendar)} type="button" disabled={Boolean(profile) && !canOpenCalendar} onClick={onCalendar}><ModuleIcon name="calendar" /><span className="module-copy"><b>{calendarSection.title}</b><small>{calendarSection.description || 'Показы, репетиции и события'}</small></span><span className="access-chip">{accessLabel(canOpenCalendar)}</span><span>→</span></button>}
     <button className={unavailableClass(canInvite)} type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><ModuleIcon name="settings" /><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, личные пароли и общий пароль</small></span><span className="access-chip">{accessLabel(canInvite)}</span><span>→</span></button>
     {scheduleSection && <button className={unavailableClass(canOpenSchedule)} type="button" disabled={Boolean(profile) && !canOpenSchedule} onClick={onSchedule}><ModuleIcon name="schedule" /><span className="module-copy"><b>{scheduleSection.title}</b><small>{scheduleSection.description || 'Дата, время, педагог, класс и отсутствие'}</small></span><span className="access-chip">{accessLabel(canOpenSchedule)}</span><span>→</span></button>}
-    {draftSections.map((section) => <button className="module-card draft-section unavailable" type="button" disabled key={section.id}><ModuleIcon name="draft" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел в подготовке'}</small></span><span className="access-chip">Нет доступа</span><span>→</span></button>)}
+    {customSections.map((section) => { const allowed = profileHasSectionAccess(profile, section.id, sections); return <button className={unavailableClass(allowed)} type="button" disabled={Boolean(profile) && !allowed} key={section.id} onClick={() => onSection(section)}><ModuleIcon name="draft" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел театра'}</small></span><span className="access-chip">{accessLabel(allowed)}</span><span>→</span></button> })}
     {canCreateSections && !creatingSection && <button className="module-card" type="button" onClick={() => setCreatingSection(true)}><ModuleIcon name="add" /><span className="module-copy"><b>Новый раздел</b><small>Добавить название будущего раздела</small></span><span className="access-chip">Добавить</span><span>→</span></button>}
     {canCreateSections && creatingSection && <form className="module-card section-create-form" onSubmit={async (event) => { if (await onCreateSection(event)) setCreatingSection(false) }}><ModuleIcon name="add" /><div className="section-create-fields"><b>Новый раздел</b><input name="sectionTitle" placeholder="Название раздела" minLength={2} maxLength={80} autoFocus required /><input name="sectionDescription" placeholder="Краткое описание (необязательно)" maxLength={140} /></div><div className="section-create-actions"><button className="button" type="button" onClick={() => setCreatingSection(false)}>Отмена</button><button className="button button-solid" type="submit">Создать</button></div></form>}
   </section></main>
+}
+
+function CustomSectionScreen({ section, onBack }: { section: WorkspaceSection; onBack: () => void }) {
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>{section.title}</h1><p>{section.description}</p></div></section></main>
 }
 
 function SectionManagement({ sections, onUpdateSection, onDeleteSection }: { sections: WorkspaceSection[]; onUpdateSection: (id: string, event: FormEvent<HTMLFormElement>) => Promise<boolean>; onDeleteSection: (section: WorkspaceSection) => void }) {
