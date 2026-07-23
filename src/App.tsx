@@ -22,12 +22,14 @@ type Participant = {
   sections: string[]; status: 'active' | 'invited'
 }
 
-const SESSION_KEY = 'tam-workhub-open'
+const LEGACY_SESSION_KEY = 'tam-workhub-open'
+const HUB_SESSION_KEY = 'tam-hub-session'
 const REACTIONS = ['❤️', '👍', '🔥', '👏', '😁', '👎']
 const DAY = 24 * 60 * 60 * 1000
 const COLLECTION_SECTION = 'collection'
 const DEVELOPER_ID = '00000000-0000-0000-0000-000000000001'
 const PUBLIC_APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
+const CONTENT_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
 const ROLE_LABELS: Record<Role, string> = { developer: 'Разраб', leader: 'Руководитель', teacher: 'Педагог', admin: 'Админ', participant: 'Участник' }
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   developer: 'Техническое сопровождение и полный доступ ко всем настройкам.',
@@ -77,12 +79,16 @@ function AttachmentList({ files }: { files: Attachment[] }) {
   ))}</div>
 }
 
+function materialFilePaths(item: Material) {
+  return Array.from(new Set([
+    ...item.sourceFiles,
+    ...item.categoryFiles,
+    ...item.descriptionFiles,
+  ].flatMap((file) => file.path ? [file.path] : [])))
+}
+
 function App() {
-  const [unlocked, setUnlocked] = useState(() => {
-    const hasAccess = localStorage.getItem(SESSION_KEY) === 'yes' || sessionStorage.getItem(SESSION_KEY) === 'yes'
-    if (hasAccess) localStorage.setItem(SESSION_KEY, 'yes')
-    return hasAccess
-  })
+  const [hubAccess, setHubAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking')
   const [passwordError, setPasswordError] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [personalSession, setPersonalSession] = useState(() => localStorage.getItem(PERSONAL_SESSION_KEY))
@@ -105,8 +111,8 @@ function App() {
 
   const currentRole: Role = profile?.role ?? 'participant'
   const canManageMembers = currentRole === 'developer' || currentRole === 'leader'
-  const canInvite = canManageMembers || currentRole === 'teacher' || currentRole === 'admin'
-  const canDelete = canInvite
+  const canInvite = CONTENT_MANAGER_ROLES.includes(currentRole)
+  const canDelete = CONTENT_MANAGER_ROLES.includes(currentRole)
   const canCreateSections = canManageMembers
   const canOpenCollection = Boolean(profile && (canManageMembers || profile.sections.includes(COLLECTION_SECTION)))
 
@@ -124,9 +130,44 @@ function App() {
     } else setParticipants([mappedProfile])
     if (mappedProfile.role === 'developer' || mappedProfile.role === 'leader' || mappedProfile.sections.includes(COLLECTION_SECTION)) {
       const { data, error } = await supabase.from('materials').select('*').order('created_at')
-      if (error) setAppError(error.message); else setMaterials((data ?? []).map(mapMaterial))
+      if (error) setAppError(error.message)
+      else {
+        const loadedMaterials = (data ?? []).map(mapMaterial)
+        const canPurgeExpired = CONTENT_MANAGER_ROLES.includes(mappedProfile.role)
+        const expiredMaterials = canPurgeExpired
+          ? loadedMaterials.filter((item) => item.deletedAt && Date.now() - item.deletedAt >= 30 * DAY)
+          : []
+        const purgedIds = new Set<string>()
+
+        for (const item of expiredMaterials) {
+          const paths = materialFilePaths(item)
+          if (paths.length) {
+            const { error: storageError } = await supabase.storage.from('materials').remove(paths)
+            if (storageError) continue
+          }
+          const { error: deleteError } = await supabase.rpc('delete_material_forever', { material_id: item.id })
+          if (!deleteError) purgedIds.add(item.id)
+        }
+
+        setMaterials(loadedMaterials.filter((item) => !purgedIds.has(item.id)))
+      }
     }
   }
+
+  useEffect(() => {
+    localStorage.removeItem(LEGACY_SESSION_KEY)
+    sessionStorage.removeItem(LEGACY_SESSION_KEY)
+    const token = localStorage.getItem(HUB_SESSION_KEY)
+    if (!token) { setHubAccess('locked'); return }
+
+    let cancelled = false
+    supabase.rpc('validate_hub_session', { session_token: token }).then(({ data, error }) => {
+      if (cancelled) return
+      if (!error && data === true) setHubAccess('unlocked')
+      else { localStorage.removeItem(HUB_SESSION_KEY); setHubAccess('locked') }
+    })
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => { setSession(data.session); loadData(data.session, personalSession) })
@@ -158,11 +199,12 @@ function App() {
       return () => window.clearInterval(timer)
     }
     if (!session) return
+    const refreshTimer = window.setInterval(() => loadData(), 60 * 60 * 1000)
     const channel = supabase.channel('workhub-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'materials' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    return () => { window.clearInterval(refreshTimer); supabase.removeChannel(channel) }
   }, [session?.user.id, personalSession, profile?.role])
 
   const activeMaterials = useMemo(() => materials.filter((item) => !item.deletedAt), [materials])
@@ -179,8 +221,12 @@ function App() {
   async function unlock(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setPasswordError(false)
     const attempt = String(new FormData(event.currentTarget).get('password'))
-    const { data, error } = await supabase.rpc('check_hub_password', { attempt })
-    if (!error && data === true) { localStorage.setItem(SESSION_KEY, 'yes'); setUnlocked(true) } else setPasswordError(true)
+    const { data, error } = await supabase.rpc('login_with_hub_password', { attempt })
+    const response = data as { status?: string; token?: string } | null
+    if (!error && response?.status === 'ok' && response.token) {
+      localStorage.setItem(HUB_SESSION_KEY, response.token)
+      setHubAccess('unlocked')
+    } else setPasswordError(true)
   }
   async function signInWithPersonalPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setAuthMessage('')
@@ -238,11 +284,33 @@ function App() {
     } catch (error) { setAppError(error instanceof Error ? error.message : 'Не удалось обновить материал') }
   }
   async function togglePinned(id: string) { const item = materials.find((m) => m.id === id); if (!item) return; await supabase.from('materials').update({ pinned: !item.pinned }).eq('id', id); await loadData() }
-  async function moveToTrash(id: string) { await supabase.rpc('trash_material', { material_id: id }); await loadData() }
+  async function moveToTrash(id: string) {
+    const item = materials.find((material) => material.id === id)
+    if (!item || !window.confirm(`Переместить материал «${item.source}» в корзину? Его можно будет восстановить в течение 30 дней.`)) return
+    const { error } = await supabase.rpc('trash_material', { material_id: id })
+    if (error) setAppError(error.message); else await loadData()
+  }
   async function restore(id: string) { await supabase.rpc('restore_material', { material_id: id }); await loadData() }
-  async function removeForever(id: string) { await supabase.rpc('delete_material_forever', { material_id: id }); await loadData() }
-  async function react(id: string, emoji: string) { const item = materials.find((m) => m.id === id); if (!item) return; await supabase.from('materials').update({ reactions: { ...item.reactions, [emoji]: (item.reactions[emoji] ?? 0) + 1 } }).eq('id', id); setReactionMenu(null); await loadData() }
-  async function addComment(id: string, text: string) { const item = materials.find((m) => m.id === id); if (!item || !text.trim()) return; await supabase.from('materials').update({ comments: [...item.comments, { id: crypto.randomUUID(), author: profile?.name ?? 'Участник', text: text.trim(), createdAt: Date.now() }] }).eq('id', id); await loadData() }
+  async function removeForever(id: string) {
+    const item = materials.find((material) => material.id === id)
+    if (!item || !window.confirm(`Удалить материал «${item.source}» навсегда? Восстановить запись и прикреплённые файлы будет невозможно.`)) return
+    const paths = materialFilePaths(item)
+    if (paths.length) {
+      const { error: storageError } = await supabase.storage.from('materials').remove(paths)
+      if (storageError) { setAppError('Не удалось удалить прикреплённые файлы. Материал сохранён в корзине.'); return }
+    }
+    const { error } = await supabase.rpc('delete_material_forever', { material_id: id })
+    if (error) setAppError(error.message); else await loadData()
+  }
+  async function react(id: string, emoji: string) {
+    const { error } = await supabase.rpc('add_material_reaction', { material_id: id, reaction_emoji: emoji })
+    if (error) setAppError(error.message); else { setReactionMenu(null); await loadData() }
+  }
+  async function addComment(id: string, commentText: string) {
+    if (!commentText.trim()) return
+    const { error } = await supabase.rpc('add_material_comment', { material_id: id, comment_text: commentText.trim() })
+    if (error) setAppError(error.message); else await loadData()
+  }
   async function inviteParticipant(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!canInvite) return
     const form = event.currentTarget; const data = new FormData(form); const requestedRole = String(data.get('role')) as Role; const role: Role = canManageMembers ? requestedRole : 'participant'
@@ -273,9 +341,22 @@ function App() {
     const payload: Record<string, unknown> = {}; if (changes.role) payload.role = changes.role; if (changes.sections) payload.sections = changes.sections
     const { error } = await supabase.from('profiles').update(payload).eq('id', id); if (error) setAppError(error.message); else await loadData()
   }
-  async function removeParticipant(id: string) { if (!canManageMembers || id === DEVELOPER_ID) return; const { error } = await supabase.from('profiles').delete().eq('id', id); if (error) setAppError(error.message); else await loadData() }
+  async function removeParticipant(id: string) {
+    if (!canManageMembers || id === DEVELOPER_ID) return
+    const participant = participants.find((item) => item.id === id)
+    if (!participant || !window.confirm(`Удалить участника «${participant.name}»? Его личный вход будет закрыт. Это действие нельзя отменить.`)) return
+    const { error } = await supabase.from('profiles').delete().eq('id', id)
+    if (error) setAppError(error.message); else await loadData()
+  }
   async function copyInvitation(email?: string) { await navigator.clipboard.writeText(`Воркхаб Камерного театра-лаборатории Т.А.М.\n${PUBLIC_APP_URL}${email ? `\nВаша почта для входа: ${email}` : ''}\nВведите общий пароль, затем почту и личный пароль, который вам сообщит администрация театра.`) }
-  async function changePassword(event: FormEvent<HTMLFormElement>) { event.preventDefault(); const form = event.currentTarget; const value = String(new FormData(form).get('newPassword')).trim(); const { error } = await supabase.rpc('set_hub_password', { new_password: value }); if (error) setAppError(error.message); else form.reset() }
+  async function changePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); const form = event.currentTarget; const value = String(new FormData(form).get('newPassword')).trim()
+    const { data, error } = await supabase.rpc('change_hub_password', { new_password: value })
+    const response = data as { status?: string; token?: string } | null
+    if (error || response?.status !== 'ok' || !response.token) { setAppError(error?.message ?? 'Не удалось изменить общий пароль.'); return }
+    localStorage.setItem(HUB_SESSION_KEY, response.token)
+    form.reset(); setAppNotice('Общий пароль изменён. Все ранее открытые входы закрыты.')
+  }
 
   async function installApp() {
     if (installPrompt) {
@@ -290,7 +371,7 @@ function App() {
   const installButton = !isInstalled && <button className="text-button install-button" type="button" onClick={installApp}>⇩ Установить</button>
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
 
-  if (!unlocked) return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1><form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>{installButton}</section>{installHelp}</main>
+  if (hubAccess !== 'unlocked') return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1>{hubAccess === 'checking' ? <p>Проверяем доступ…</p> : <form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>}{installButton}</section>{installHelp}</main>
 
   return <div className="app-shell">
     <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip"><span aria-hidden="true">○</span><span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{profile ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Личный вход</button>}</div></header>
@@ -340,19 +421,19 @@ function MaterialRow({ item, mobile, canDelete, reactionMenu, commentsOpen, onPi
   const reactionCount = Object.values(item.reactions).reduce((sum, count) => sum + count, 0)
   const reactions = <div className="reaction-area"><button className="text-button" type="button" onPointerDown={() => { longPressTriggered.current = false; longPressTimer.current = window.setTimeout(() => { longPressTriggered.current = true; onReactionMenu(item.id) }, 450) }} onPointerUp={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onPointerLeave={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onClick={() => { if (longPressTriggered.current) { longPressTriggered.current = false; return }; onReactionMenu(reactionMenu === item.id ? null : item.id) }}>{reactionCount ? Object.entries(item.reactions).filter(([, count]) => count).map(([emoji, count]) => `${emoji}${count}`).join(' ') : '＋ реакция'}</button>{reactionMenu === item.id && <div className="reaction-menu">{REACTIONS.map((emoji) => <button type="button" key={emoji} onClick={() => onReact(item.id, emoji)}>{emoji}</button>)}</div>}</div>
   const comments = commentsOpen === item.id && <div className="comments-panel">{item.comments.map((entry) => <p key={entry.id}><b>{entry.author}:</b> <LinkifyText text={entry.text} /></p>)}<form onSubmit={(event) => { event.preventDefault(); onAddComment(item.id, comment); setComment('') }}><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий" /><button className="button" type="submit">Добавить</button></form></div>
-  if (mobile) return <article className="material-card" style={style}><header><span className="category-chip">{item.category}</span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></header><section><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></section><section><p><LinkifyText text={item.description} /></p><AttachmentList files={item.descriptionFiles} /></section><footer>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span></footer>{comments}</article>
+  if (mobile) return <article className="material-card" style={style}><header><span className="category-chip">{item.category}</span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></header><section><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></section>{item.categoryFiles.length > 0 && <section><small>Для чего</small><AttachmentList files={item.categoryFiles} /></section>}<section><p><LinkifyText text={item.description} /></p><AttachmentList files={item.descriptionFiles} /></section><footer>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span></footer>{comments}</article>
   return <article className="material-row" style={style}><span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></span><span><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></span><span><span className="category-chip">{item.category}</span><AttachmentList files={item.categoryFiles} /></span><span><LinkifyText text={item.description} /><AttachmentList files={item.descriptionFiles} /></span><span>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button></span><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span>{comments && <div className="row-comments">{comments}</div>}</article>
 }
 
 type MaterialInput = Pick<Material, 'source' | 'sourceFiles' | 'category' | 'categoryFiles' | 'description' | 'descriptionFiles'>
 function MaterialForm({ categories, initial, onCancel, onSave }: { categories: string[]; initial: Material | null; onCancel: () => void; onSave: (material: MaterialInput) => Promise<void> }) {
-  const [sourceFiles, setSourceFiles] = useState<Attachment[]>(initial?.sourceFiles ?? []); const [categoryFiles, setCategoryFiles] = useState<Attachment[]>(initial?.categoryFiles ?? []); const [descriptionFiles, setDescriptionFiles] = useState<Attachment[]>(initial?.descriptionFiles ?? []); const [notify, setNotify] = useState(false); const [saving, setSaving] = useState(false)
-  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setSaving(true); const data = new FormData(event.currentTarget); await onSave({ source: String(data.get('source')).trim(), sourceFiles, category: String(data.get('category')).trim(), categoryFiles, description: String(data.get('description')).trim(), descriptionFiles }); if (notify && Notification.permission === 'default') Notification.requestPermission().catch(() => undefined); setSaving(false) }
+  const [sourceFiles, setSourceFiles] = useState<Attachment[]>(initial?.sourceFiles ?? []); const [categoryFiles, setCategoryFiles] = useState<Attachment[]>(initial?.categoryFiles ?? []); const [descriptionFiles, setDescriptionFiles] = useState<Attachment[]>(initial?.descriptionFiles ?? []); const [saving, setSaving] = useState(false)
+  async function submit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setSaving(true); const data = new FormData(event.currentTarget); await onSave({ source: String(data.get('source')).trim(), sourceFiles, category: String(data.get('category')).trim(), categoryFiles, description: String(data.get('description')).trim(), descriptionFiles }); setSaving(false) }
   return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onCancel}>←</button><div><h1>{initial ? 'Редактирование материала' : 'Новый материал'}</h1><p>Заполните три поля</p></div></section><form className="material-form" onSubmit={submit}><div className="form-grid">
     <section className="form-field"><h2>1. Источник</h2><textarea name="source" rows={5} defaultValue={initial?.source} placeholder="Ссылка, название или текст" required /><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setSourceFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={sourceFiles} /></section>
     <section className="form-field"><h2>2. Для чего</h2><input name="category" list="category-list" defaultValue={initial?.category} placeholder="Например: спектакль" required /><datalist id="category-list">{categories.map((category) => <option value={category} key={category} />)}</datalist><small>Одна категория. Регистр букв не учитывается.</small><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setCategoryFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={categoryFiles} /></section>
     <section className="form-field"><h2>3. Что внутри</h2><textarea name="description" rows={5} defaultValue={initial?.description} placeholder="Описание или комментарий" required /><label className="file-control">Прикрепить файлы<input type="file" multiple onChange={(event) => setDescriptionFiles((current) => [...current, ...fileListToAttachments(event.target.files)])} /></label><AttachmentList files={descriptionFiles} /></section>
-  </div><div className="form-footer"><label className="switch"><input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} /><span>Уведомить остальных педагогов</span></label><div><button className="button" type="button" onClick={onCancel}>Отмена</button><button className="button button-solid" type="submit" disabled={saving}>{saving ? 'Сохраняю…' : initial ? 'Сохранить изменения' : 'Сохранить'}</button></div></div></form></main>
+  </div><div className="form-footer"><div><button className="button" type="button" onClick={onCancel}>Отмена</button><button className="button button-solid" type="submit" disabled={saving}>{saving ? 'Сохраняю…' : initial ? 'Сохранить изменения' : 'Сохранить'}</button></div></div></form></main>
 }
 
 function TrashScreen({ materials, onBack, onRestore, onRemove }: { materials: Material[]; onBack: () => void; onRestore: (id: string) => void; onRemove: (id: string) => void }) {
