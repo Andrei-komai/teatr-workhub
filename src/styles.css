@@ -296,6 +296,7 @@ h1, h2, p { margin-top: 0; }
 .material-form small { color: var(--muted); }
 .file-control { display: grid; gap: 6px; padding-top: 5px; font-size: .86rem; }
 .form-footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--ink); }
+.material-form-error { margin: 14px 0 0; padding: 10px 12px; border: 1px solid #a63b35; border-radius: 7px; background: #fff1ef; color: #8c211d; }
 .form-footer > div { display: flex; gap: 8px; margin-left: auto; }
 .switch { display: flex; align-items: center; gap: 9px; }
 .switch input { width: 20px; height: 20px; }
