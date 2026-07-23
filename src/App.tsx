@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { CalendarScreen, ScheduleScreen } from './CalendarScreen'
-import type { CalendarAttachment, CalendarEvent, CalendarEventInput } from './CalendarScreen'
+import type { CalendarAttachment, CalendarEvent, CalendarEventInput, ScheduleEntry, ScheduleEntryInput } from './CalendarScreen'
 import { PERSONAL_SESSION_KEY, supabase } from './supabase'
 
 interface BeforeInstallPromptEvent extends Event {
@@ -33,6 +33,7 @@ const REACTIONS = ['❤️', '👍', '🔥', '👏', '😁', '👎']
 const DAY = 24 * 60 * 60 * 1000
 const COLLECTION_SECTION = 'collection'
 const CALENDAR_SECTION = 'calendar'
+const SCHEDULE_SECTION = 'schedule'
 const DEVELOPER_ID = '00000000-0000-0000-0000-000000000001'
 const PUBLIC_APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
 const CONTENT_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
@@ -70,6 +71,13 @@ function mapCalendarEvent(row: Record<string, unknown>): CalendarEvent {
     id: String(row.id), title: String(row.title), eventType: String(row.event_type) as CalendarEvent['eventType'], eventDate: String(row.event_date),
     startTime: String(row.start_time), endTime: row.end_time ? String(row.end_time) : null, description: String(row.description ?? ''),
     attachments: (row.attachments as CalendarAttachment[]) ?? [], authorId: row.author_id ? String(row.author_id) : null, createdAt: new Date(String(row.created_at)).getTime(),
+  }
+}
+function mapScheduleEntry(row: Record<string, unknown>): ScheduleEntry {
+  return {
+    id: String(row.id), eventDate: String(row.event_date), startTime: String(row.start_time), teacher: String(row.teacher),
+    className: String(row.class_name), topic: String(row.topic ?? ''), absence: String(row.absence ?? ''),
+    authorId: row.author_id ? String(row.author_id) : null, createdAt: new Date(String(row.created_at)).getTime(),
   }
 }
 function profileHasSectionAccess(targetProfile: Participant | null, sectionId: string, availableSections: WorkspaceSection[]) {
@@ -119,6 +127,7 @@ function App() {
   const [materials, setMaterials] = useState<Material[]>([])
   const [sections, setSections] = useState<WorkspaceSection[]>([])
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
+  const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([])
   const [screen, setScreen] = useState<Screen>('hub')
   const [returnScreen, setReturnScreen] = useState<Screen>('hub')
   const [query, setQuery] = useState('')
@@ -150,25 +159,28 @@ function App() {
   const canInvite = CONTENT_MANAGER_ROLES.includes(currentRole)
   const canDelete = CONTENT_MANAGER_ROLES.includes(currentRole)
   const canCreateSections = canManageMembers
-  const scheduleSection = sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
+  const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
   const canOpenCollection = profileHasSectionAccess(profile, COLLECTION_SECTION, sections)
   const canOpenCalendar = profileHasSectionAccess(profile, CALENDAR_SECTION, sections)
   const canOpenSchedule = Boolean(scheduleSection && profileHasSectionAccess(profile, scheduleSection.id, sections))
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession) {
-    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); return }
+    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); return }
     const { data: ownProfile, error: profileError } = await supabase.rpc('get_current_profile')
     if (profileError) { setAppError(profileError.message); return }
     setAppError('')
     const mappedProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
     setProfile(mappedProfile)
-    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); return }
+    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); return }
     const { data: sectionRows, error: sectionError } = await supabase.from('sections').select('*').order('sort_order')
     if (sectionError) setAppError(sectionError.message)
     else setSections((sectionRows ?? []).map(mapSection))
     const { data: eventRows, error: eventError } = await supabase.from('calendar_events').select('*').order('event_date').order('start_time')
     if (eventError && eventError.code !== 'PGRST205') setAppError(eventError.message)
     else setCalendarEvents((eventRows ?? []).map(mapCalendarEvent))
+    const { data: scheduleRows, error: scheduleError } = await supabase.from('schedule_entries').select('*').order('event_date').order('start_time')
+    if (scheduleError && scheduleError.code !== 'PGRST205') setAppError(scheduleError.message)
+    else setScheduleEntries((scheduleRows ?? []).map(mapScheduleEntry))
     if (['developer', 'leader', 'teacher', 'admin'].includes(mappedProfile.role)) {
       const { data } = await supabase.from('profiles').select('*').order('created_at')
       setParticipants((data ?? []).map(mapParticipant))
@@ -250,6 +262,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_entries' }, () => loadData())
       .subscribe()
     return () => { window.clearInterval(refreshTimer); supabase.removeChannel(channel) }
   }, [session?.user.id, personalSession, profile?.role])
@@ -292,7 +305,7 @@ function App() {
     if (personalSession) await supabase.rpc('logout_personal_session')
     localStorage.removeItem(PERSONAL_SESSION_KEY); setPersonalSession(null)
     if (session) await supabase.auth.signOut()
-    setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScreen('hub')
+    setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScreen('hub')
   }
   function requireAccess(target: Screen) {
     if (!profile) { setReturnScreen(target); setScreen('auth'); return }
@@ -511,6 +524,26 @@ function App() {
     await loadData()
   }
 
+  async function saveScheduleEntry(input: ScheduleEntryInput, initial: ScheduleEntry | null) {
+    if (!profile || !CONTENT_MANAGER_ROLES.includes(profile.role)) return false
+    const payload = { event_date: input.eventDate, start_time: input.startTime, teacher: input.teacher, class_name: input.className, topic: input.topic, absence: input.absence }
+    const { error } = initial
+      ? await supabase.from('schedule_entries').update(payload).eq('id', initial.id)
+      : await supabase.from('schedule_entries').insert({ ...payload, author_id: profile.id })
+    if (error) { setAppError(error.message); return false }
+    setAppNotice(initial ? 'Запись расписания обновлена' : 'Запись добавлена в расписание')
+    await loadData()
+    return true
+  }
+
+  async function deleteScheduleEntry(item: ScheduleEntry) {
+    if (!CONTENT_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить запись «${item.className}» ${item.eventDate}? Это действие нельзя отменить.`)) return
+    const { error } = await supabase.from('schedule_entries').delete().eq('id', item.id)
+    if (error) { setAppError(error.message); return }
+    setAppNotice('Запись расписания удалена')
+    await loadData()
+  }
+
   const installButton = !isInstalled && <button className="text-button install-button" type="button" onClick={installApp}>⇩ Установить</button>
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
   const visibleAppError = /failed to fetch/i.test(appError) ? 'Нет связи с сервером. Проверьте интернет.' : appError
@@ -531,7 +564,7 @@ function App() {
     {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
     {screen === 'settings' && <SettingsScreen participants={participants} sections={sections} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} onUpdateSection={updateSection} onDeleteSection={deleteSection} />}
     {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
-    {screen === 'schedule' && <ScheduleScreen title={sections.find((section) => /расписан/i.test(section.title))?.title ?? 'Расписание занятий'} description={sections.find((section) => /расписан/i.test(section.title))?.description ?? 'Репетиции и показы из календаря репертуара'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
+    {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} />}
   </div>
 }
 
@@ -544,13 +577,13 @@ function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSch
   const [creatingSection, setCreatingSection] = useState(false)
   const collectionSection = sections.find((section) => section.id === COLLECTION_SECTION)
   const calendarSection = sections.find((section) => section.id === CALENDAR_SECTION)
-  const scheduleSection = sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
+  const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
   const draftSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && !section.enabled)
   return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><div className="workhub-media" aria-hidden="true"><img className="workhub-poster" src={`${import.meta.env.BASE_URL}workhub-hero.webp`} alt="" /><video className="workhub-video" autoPlay muted loop playsInline preload="metadata" poster={`${import.meta.env.BASE_URL}workhub-hero.webp`}><source src={`${import.meta.env.BASE_URL}workhub-hero.mp4`} type="video/mp4" /></video></div></section><section className="module-grid" aria-label="Разделы театра">
     {collectionSection && <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><span className="module-icon">▦</span><span className="module-copy"><b>{collectionSection.title}</b><small>{collectionSection.description || 'Ссылки, файлы, идеи и комментарии'}</small></span><span className="access-chip">{canOpenCollection ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>}
-    {calendarSection && <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCalendar} onClick={onCalendar}><span className="module-icon">□</span><span className="module-copy"><b>{calendarSection.title}</b><small>{calendarSection.description || 'Показы, репетиции и события'}</small></span><span className="access-chip">{canOpenCalendar ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>}
+    {calendarSection && <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenCalendar} onClick={onCalendar}><span className="module-icon calendar-module-icon" aria-hidden="true">📅</span><span className="module-copy"><b>{calendarSection.title}</b><small>{calendarSection.description || 'Показы, репетиции и события'}</small></span><span className="access-chip">{canOpenCalendar ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>}
     <button className="module-card" type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><span className="module-icon">◎</span><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, личные пароли и общий пароль</small></span><span className="access-chip">{canManageMembers ? 'Управление' : canInvite ? 'Участники' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>
-    {scheduleSection && <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenSchedule} onClick={onSchedule}><span className="module-icon">↻</span><span className="module-copy"><b>{scheduleSection.title}</b><small>{scheduleSection.description || 'Репетиции и показы из календаря'}</small></span><span className="access-chip">{canOpenSchedule ? 'Синхронизация' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>}
+    {scheduleSection && <button className="module-card" type="button" disabled={Boolean(profile) && !canOpenSchedule} onClick={onSchedule}><span className="module-icon">⌚</span><span className="module-copy"><b>{scheduleSection.title}</b><small>{scheduleSection.description || 'Дата, время, педагог, класс и отсутствие'}</small></span><span className="access-chip">{canOpenSchedule ? 'Есть доступ' : profile ? 'Нет доступа' : 'Личный вход'}</span><span>→</span></button>}
     {draftSections.map((section) => <button className="module-card draft-section" type="button" disabled key={section.id}><span className="module-icon">□</span><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел в подготовке'}</small></span><span className="access-chip">В разработке</span><span>→</span></button>)}
     {canCreateSections && !creatingSection && <button className="module-card" type="button" onClick={() => setCreatingSection(true)}><span className="module-icon">＋</span><span className="module-copy"><b>Новый раздел</b><small>Добавить название будущего раздела</small></span><span className="access-chip">Добавить</span><span>→</span></button>}
     {canCreateSections && creatingSection && <form className="module-card section-create-form" onSubmit={async (event) => { if (await onCreateSection(event)) setCreatingSection(false) }}><span className="module-icon">＋</span><div className="section-create-fields"><b>Новый раздел</b><input name="sectionTitle" placeholder="Название раздела" minLength={2} maxLength={80} autoFocus required /><input name="sectionDescription" placeholder="Краткое описание (необязательно)" maxLength={140} /></div><div className="section-create-actions"><button className="button" type="button" onClick={() => setCreatingSection(false)}>Отмена</button><button className="button button-solid" type="submit">Создать</button></div></form>}
