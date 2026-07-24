@@ -392,6 +392,9 @@ h1, h2, p { margin-top: 0; }
 .content-plan-row.development { grid-template-columns: 128px minmax(220px, 1.25fr) minmax(150px, .7fr) minmax(150px, .7fr) minmax(210px, 1fr) auto; }
 .content-plan-row label { min-width: 0; display: grid; gap: 5px; color: var(--muted); font-size: .72rem; }
 .content-plan-row input, .content-plan-row textarea { width: 100%; min-height: 38px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); resize: vertical; }
+.content-plan-date { min-width: 0; }
+.content-plan-date input[type="date"] { min-width: 0; max-width: 100%; }
+.content-plan-date input[type="date"]::-webkit-date-and-time-value { min-width: 0; text-align: left; }
 .content-plan-resource { align-content: start; }
 .content-plan-link { width: fit-content; color: var(--ink); font-size: .72rem; }
 .compact-file-control { width: fit-content; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; color: var(--ink); cursor: pointer; }

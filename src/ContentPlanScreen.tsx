@@ -91,7 +91,7 @@ function PlanRow({ kind, initial, defaultDate, minDate, maxDate, onSave, onDelet
     if (saved) onSaved?.()
   }
   return <form className={`content-plan-row ${kind}`} onSubmit={submit}>
-    <label><span>Дата</span><input name="contentDate" type="date" min={minDate} max={maxDate} value={date} onChange={(event) => setDate(event.target.value)} required /></label>
+    <label className="content-plan-date"><span>Дата</span><input name="contentDate" type="date" min={minDate} max={maxDate} value={date} onChange={(event) => setDate(event.target.value)} required /></label>
     <label className="content-plan-description"><span>{kind === 'current' ? 'Что публикуем' : 'Смыслы'}</span><textarea name="description" rows={2} defaultValue={initial?.description ?? ''} placeholder={kind === 'current' ? 'Что постим, краткое описание' : 'Что именно разрабатываем и зачем'} /></label>
     {kind === 'development' && <label><span>Формат</span><input name="format" defaultValue={initial?.format ?? ''} placeholder="Сторителлинг, пост, видео…" /></label>}
     <label><span>Ответственный</span><input name="responsible" defaultValue={initial?.responsible ?? ''} placeholder="Кто делает или публикует" /></label>
