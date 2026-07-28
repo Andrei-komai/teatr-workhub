@@ -36,27 +36,34 @@ type SubscriptionRow = {
 }
 
 const APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
-const MOSCOW_OFFSET = '+03:00'
+const THEATER_UTC_OFFSET = '+05:00'
+const THEATER_UTC_OFFSET_HOURS = 5
 
 function localDate(ms: number) {
-  return new Date(ms + 3 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  return new Date(ms + THEATER_UTC_OFFSET_HOURS * 60 * 60 * 1000).toISOString().slice(0, 10)
 }
 
 function eventTimestamp(date: string, time: string) {
-  return new Date(`${date}T${time.slice(0, 5)}:00${MOSCOW_OFFSET}`).getTime()
+  return new Date(`${date}T${time.slice(0, 5)}:00${THEATER_UTC_OFFSET}`).getTime()
 }
 
-function eventMessage(item: CalendarRow) {
+function reminderText(minutes: number) {
+  if (minutes === 60) return 'через 1 час'
+  if (minutes % 60 === 0) return `через ${minutes / 60} ч.`
+  return `через ${minutes} мин.`
+}
+
+function eventMessage(item: CalendarRow, reminderMinutes: number) {
   const label = item.event_type === 'show' ? 'Показ' : item.event_type === 'rehearsal' ? 'Репетиция' : 'Событие'
   return {
-    title: `Т.А.М. · ${label} через 2 часа`,
+    title: `Т.А.М. · ${label} ${reminderText(reminderMinutes)}`,
     body: `${label} «${item.title}» начнётся в ${item.start_time.slice(0, 5)}.`,
   }
 }
 
-function classMessage(item: ScheduleRow) {
+function classMessage(item: ScheduleRow, reminderMinutes: number) {
   return {
-    title: 'Т.А.М. · Класс через 2 часа',
+    title: `Т.А.М. · Класс ${reminderText(reminderMinutes)}`,
     body: `Класс «${item.class_name}» начнётся в ${item.start_time.slice(0, 5)}${item.teacher ? `. Педагог: ${item.teacher}.` : '.'}`,
   }
 }
@@ -101,20 +108,17 @@ async fetch(request: Request) {
       sourceType: 'event' as const,
       sourceId: item.id,
       startsAt: eventTimestamp(item.event_date, item.start_time),
-      message: eventMessage(item),
+      message: (reminderMinutes: number) => eventMessage(item, reminderMinutes),
       enabled: (profileId: string) => preferences.get(profileId)?.events_enabled ?? true,
     })),
     ...(classesResult.data as ScheduleRow[]).map((item) => ({
       sourceType: 'class' as const,
       sourceId: item.id,
       startsAt: eventTimestamp(item.event_date, item.start_time),
-      message: classMessage(item),
+      message: (reminderMinutes: number) => classMessage(item, reminderMinutes),
       enabled: (profileId: string) => preferences.get(profileId)?.classes_enabled ?? true,
     })),
-  ].filter((item) => {
-    const minutesUntil = (item.startsAt - now) / 60000
-    return minutesUntil >= 118 && minutesUntil <= 122
-  })
+  ]
 
   let sent = 0
   let skipped = 0
@@ -126,6 +130,15 @@ async fetch(request: Request) {
         skipped += 1
         continue
       }
+
+      const reminderMinutes = preferences.get(subscription.profile_id)?.reminder_minutes ?? 60
+      const minutesUntil = (item.startsAt - now) / 60000
+      if (minutesUntil < reminderMinutes - 2 || minutesUntil > reminderMinutes + 2) {
+        skipped += 1
+        continue
+      }
+
+      const message = item.message(reminderMinutes)
 
       const scheduledFor = new Date(item.startsAt).toISOString()
       const { data: claim, error: claimError } = await db
@@ -156,8 +169,8 @@ async fetch(request: Request) {
             keys: { p256dh: subscription.p256dh, auth: subscription.auth },
           },
           JSON.stringify({
-            title: item.message.title,
-            body: item.message.body,
+            title: message.title,
+            body: message.body,
             url: APP_URL,
             tag: `${item.sourceType}-${item.sourceId}`,
           }),
