@@ -241,7 +241,7 @@ h1, h2, p { margin-top: 0; }
 .calendar-event-editor h2 { margin-bottom: 18px; text-transform: uppercase; }
 .calendar-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
 .calendar-form-grid label { display: grid; gap: 6px; color: var(--muted); font-size: .8rem; }
-.calendar-form-grid input, .calendar-form-grid select, .calendar-form-grid textarea { width: 100%; min-height: 42px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
+.calendar-form-grid input, .calendar-form-grid select, .calendar-form-grid textarea { width: 100%; min-width: 0; max-width: 100%; min-height: 42px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); }
 .calendar-form-grid textarea { resize: vertical; }
 .calendar-form-wide { grid-column: 1 / -1; }
 .calendar-form-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; padding-top: 12px; border-top: 1px solid var(--line); }
@@ -295,7 +295,7 @@ h1, h2, p { margin-top: 0; }
 .schedule-absence-button { margin-top: 10px; font-size: .82rem; }
 .regular-absence-editor > p:not(.eyebrow) { margin: 0 0 16px; color: var(--muted); line-height: 1.45; }
 .regular-absence-editor label { display: grid; gap: 7px; }
-.regular-absence-editor textarea { padding: 10px; resize: vertical; }
+.regular-absence-editor textarea { width: 100%; min-width: 0; max-width: 100%; min-height: 88px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); resize: vertical; }
 .danger-button { border-color: #9a221f; color: #9a221f; }
 .event-type.schedule { background: #3c638e; }
 
