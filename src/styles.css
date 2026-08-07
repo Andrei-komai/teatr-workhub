@@ -286,6 +286,17 @@ h1, h2, p { margin-top: 0; }
 .schedule-entry-content dd { margin: 0; overflow-wrap: anywhere; }
 .schedule-entry-content .schedule-absence { margin-top: 3px; padding-top: 6px; border-top: 1px solid var(--line); }
 .schedule-entry-content .schedule-absence dd { color: #8f2d25; }
+.schedule-entry-labels { display: flex; flex-wrap: wrap; gap: 6px; }
+.event-type.recurring { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+.schedule-entry-content .schedule-absence.regular dd { display: grid; gap: 3px; color: var(--ink); }
+.schedule-repeat-control { display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px solid var(--ink); border-radius: 8px; background: #f4f4ef; cursor: pointer; }
+.schedule-repeat-control input { flex: 0 0 auto; width: 20px; height: 20px; accent-color: var(--ink); }
+.schedule-repeat-note { margin: -4px 0 0; color: var(--muted); font-size: .86rem; line-height: 1.4; }
+.schedule-absence-button { margin-top: 10px; font-size: .82rem; }
+.regular-absence-editor > p:not(.eyebrow) { margin: 0 0 16px; color: var(--muted); line-height: 1.45; }
+.regular-absence-editor label { display: grid; gap: 7px; }
+.regular-absence-editor textarea { padding: 10px; resize: vertical; }
+.danger-button { border-color: #9a221f; color: #9a221f; }
 .event-type.schedule { background: #3c638e; }
 
 .material-form { padding-top: 14px; }

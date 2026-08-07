@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { CalendarScreen, ScheduleScreen } from './CalendarScreen'
-import type { CalendarAttachment, CalendarEvent, CalendarEventInput, ScheduleEntry, ScheduleEntryInput } from './CalendarScreen'
+import type { CalendarAttachment, CalendarEvent, CalendarEventInput, ScheduleEntry, ScheduleEntryInput, ScheduleRegularAbsence } from './CalendarScreen'
 import { ContentPlanScreen } from './ContentPlanScreen'
 import type { ContentPlanAttachment, ContentPlanInput, ContentPlanItem } from './ContentPlanScreen'
 import { PERSONAL_SESSION_KEY, supabase } from './supabase'
@@ -150,9 +150,13 @@ function mapCalendarEvent(row: Record<string, unknown>): CalendarEvent {
 function mapScheduleEntry(row: Record<string, unknown>): ScheduleEntry {
   return {
     id: String(row.id), eventDate: String(row.event_date), startTime: String(row.start_time), teacher: String(row.teacher),
-    className: String(row.class_name), topic: String(row.topic ?? ''), absence: String(row.absence ?? ''),
+    endTime: row.end_time ? String(row.end_time) : null, className: String(row.class_name), topic: String(row.topic ?? ''), absence: String(row.absence ?? ''),
+    seriesId: row.series_id ? String(row.series_id) : null,
     authorId: row.author_id ? String(row.author_id) : null, createdAt: new Date(String(row.created_at)).getTime(),
   }
+}
+function mapScheduleRegularAbsence(row: Record<string, unknown>): ScheduleRegularAbsence {
+  return { seriesId: String(row.series_id), profileId: String(row.profile_id), reason: String(row.reason ?? '') }
 }
 function mapContentPlanItem(row: Record<string, unknown>): ContentPlanItem {
   return {
@@ -235,6 +239,8 @@ function App() {
   const [sections, setSections] = useState<WorkspaceSection[]>([])
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([])
+  const [scheduleRegularAbsences, setScheduleRegularAbsences] = useState<ScheduleRegularAbsence[]>([])
+  const [scheduleParticipantNames, setScheduleParticipantNames] = useState<Record<string, string>>({})
   const [contentPlanItems, setContentPlanItems] = useState<ContentPlanItem[]>([])
   const [screen, setScreen] = useState<Screen>('hub')
   const [returnScreen, setReturnScreen] = useState<Screen>('hub')
@@ -288,7 +294,7 @@ function App() {
     const rawProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
     const mappedProfile = rawProfile ? (await withAvatarUrls([rawProfile]))[0] : null
     setProfile(mappedProfile)
-    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); return }
+    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); return }
     const { data: sectionRows, error: sectionError } = await supabase.from('sections').select('*').order('sort_order')
     if (sectionError) setAppError(sectionError.message)
     else setSections((sectionRows ?? []).map(mapSection))
@@ -298,6 +304,11 @@ function App() {
     const { data: scheduleRows, error: scheduleError } = await supabase.from('schedule_entries').select('*').order('event_date').order('start_time')
     if (scheduleError && scheduleError.code !== 'PGRST205') setAppError(scheduleError.message)
     else setScheduleEntries((scheduleRows ?? []).map(mapScheduleEntry))
+    const { data: absenceRows, error: absenceError } = await supabase.from('schedule_regular_absences').select('*')
+    if (absenceError && absenceError.code !== 'PGRST205') setAppError(absenceError.message)
+    else setScheduleRegularAbsences((absenceRows ?? []).map(mapScheduleRegularAbsence))
+    const { data: scheduleNames, error: scheduleNamesError } = await supabase.rpc('get_schedule_participant_names')
+    if (!scheduleNamesError) setScheduleParticipantNames(Object.fromEntries(((scheduleNames ?? []) as Record<string, unknown>[]).map((item) => [String(item.profile_id), String(item.profile_name)])))
     const { data: contentPlanRows, error: contentPlanError } = await supabase.from('content_plan_items').select('*').order('content_date').order('created_at')
     if (contentPlanError && contentPlanError.code !== 'PGRST205') setAppError(contentPlanError.message)
     else setContentPlanItems((contentPlanRows ?? []).map(mapContentPlanItem))
@@ -383,6 +394,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_entries' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_regular_absences' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'content_plan_items' }, () => loadData())
       .subscribe()
     return () => { window.clearInterval(refreshTimer); supabase.removeChannel(channel) }
@@ -760,10 +772,42 @@ function App() {
 
   async function saveScheduleEntry(input: ScheduleEntryInput, initial: ScheduleEntry | null) {
     if (!profile || !CONTENT_MANAGER_ROLES.includes(profile.role)) return false
-    const payload = { event_date: input.eventDate, start_time: input.startTime, teacher: input.teacher, class_name: input.className, topic: input.topic, absence: input.absence }
-    const { error } = initial
-      ? await supabase.from('schedule_entries').update(payload).eq('id', initial.id)
-      : await supabase.from('schedule_entries').insert({ ...payload, author_id: profile.id })
+    if (input.endTime && input.endTime <= input.startTime) { setAppError('Время окончания должно быть позже времени начала.'); return false }
+    if (initial?.seriesId) {
+      const { error: seriesError } = await supabase.rpc('update_schedule_series', {
+        target_series_id: initial.seriesId,
+        series_start_time: input.startTime,
+        series_end_time: input.endTime,
+        series_teacher: input.teacher,
+        series_class_name: input.className,
+        series_topic: input.topic,
+      })
+      if (seriesError) { setAppError(seriesError.message); return false }
+      const { error: absenceError } = await supabase.from('schedule_entries').update({ absence: input.absence }).eq('id', initial.id)
+      if (absenceError) { setAppError(absenceError.message); return false }
+      setAppNotice('Регулярное занятие обновлено во всей серии')
+      await loadData()
+      return true
+    }
+    if (!initial && input.makeRecurring && input.repeatUntil) {
+      const { data, error } = await supabase.rpc('create_schedule_series', {
+        series_start_date: input.eventDate,
+        series_end_date: input.repeatUntil,
+        series_start_time: input.startTime,
+        series_end_time: input.endTime,
+        series_teacher: input.teacher,
+        series_class_name: input.className,
+        series_topic: input.topic,
+      })
+      if (error) { setAppError(error.message); return false }
+      const result = data as { created_count?: number; skipped_holidays?: number } | null
+      const skipped = Number(result?.skipped_holidays ?? 0)
+      setAppNotice(`Создано регулярных занятий: ${Number(result?.created_count ?? 0)}${skipped ? `. Праздничных дат пропущено: ${skipped}` : ''}`)
+      await loadData()
+      return true
+    }
+    const payload = { event_date: input.eventDate, start_time: input.startTime, end_time: input.endTime, teacher: input.teacher, class_name: input.className, topic: input.topic, absence: input.absence }
+    const { error } = initial ? await supabase.from('schedule_entries').update(payload).eq('id', initial.id) : await supabase.from('schedule_entries').insert({ ...payload, author_id: profile.id })
     if (error) { setAppError(error.message); return false }
     setAppNotice(initial ? 'Запись расписания обновлена' : 'Запись добавлена в расписание')
     await loadData()
@@ -771,11 +815,22 @@ function App() {
   }
 
   async function deleteScheduleEntry(item: ScheduleEntry) {
-    if (!CONTENT_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить запись «${item.className}» ${item.eventDate}? Это действие нельзя отменить.`)) return
-    const { error } = await supabase.from('schedule_entries').delete().eq('id', item.id)
+    const title = item.className || 'Занятие'
+    const prompt = item.seriesId ? `Удалить регулярное занятие «${title}» и все даты этой серии? Это действие нельзя отменить.` : `Удалить запись «${title}» ${item.eventDate}? Это действие нельзя отменить.`
+    if (!CONTENT_MANAGER_ROLES.includes(currentRole) || !window.confirm(prompt)) return
+    const { error } = item.seriesId ? await supabase.rpc('delete_schedule_series', { target_series_id: item.seriesId }) : await supabase.from('schedule_entries').delete().eq('id', item.id)
     if (error) { setAppError(error.message); return }
-    setAppNotice('Запись расписания удалена')
+    setAppNotice(item.seriesId ? 'Регулярное занятие и вся серия удалены' : 'Запись расписания удалена')
     await loadData()
+  }
+
+  async function saveOwnRegularAbsence(seriesId: string, reason: string) {
+    if (!profile || profile.role !== 'participant') return false
+    const { error } = await supabase.rpc('set_own_regular_absence', { target_series_id: seriesId, absence_reason: reason })
+    if (error) { setAppError(error.message); return false }
+    setAppNotice(reason ? 'Регулярное отсутствие сохранено во всей серии' : 'Регулярное отсутствие убрано из всей серии')
+    await loadData()
+    return true
   }
 
   async function uploadContentPlanFiles(files: ContentPlanAttachment[], itemId: string) {
@@ -846,7 +901,7 @@ function App() {
     {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
     {screen === 'settings' && <SettingsScreen participants={participants} sections={sections} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} onUpdateSection={updateSection} onDeleteSection={deleteSection} />}
     {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
-    {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} />}
+    {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} regularAbsences={scheduleRegularAbsences} participantNames={scheduleParticipantNames} currentProfileId={profile?.id ?? null} currentRole={currentRole} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} onSaveRegularAbsence={saveOwnRegularAbsence} />}
     {screen === 'contentPlan' && contentPlanSection && <ContentPlanScreen title={contentPlanSection.title} description={contentPlanSection.description || 'Публикации, съёмки и разработка контента'} entries={contentPlanItems} onBack={() => setScreen('hub')} onSave={saveContentPlanItem} onDelete={deleteContentPlanItem} />}
     {screen === 'custom' && activeSection && <CustomSectionScreen section={activeSection} onBack={() => setScreen('hub')} />}
   </div>
