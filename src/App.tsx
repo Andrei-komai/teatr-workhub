@@ -825,7 +825,7 @@ function App() {
   }
 
   async function saveOwnRegularAbsence(seriesId: string, reason: string) {
-    if (!profile || profile.role !== 'participant') return false
+    if (!profile) return false
     const { error } = await supabase.rpc('set_own_regular_absence', { target_series_id: seriesId, absence_reason: reason })
     if (error) { setAppError(error.message); return false }
     setAppNotice(reason ? 'Регулярное отсутствие сохранено во всей серии' : 'Регулярное отсутствие убрано из всей серии')
@@ -901,7 +901,7 @@ function App() {
     {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
     {screen === 'settings' && <SettingsScreen participants={participants} sections={sections} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} onUpdateSection={updateSection} onDeleteSection={deleteSection} />}
     {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
-    {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} regularAbsences={scheduleRegularAbsences} participantNames={scheduleParticipantNames} currentProfileId={profile?.id ?? null} currentRole={currentRole} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} onSaveRegularAbsence={saveOwnRegularAbsence} />}
+    {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} regularAbsences={scheduleRegularAbsences} participantNames={scheduleParticipantNames} currentProfileId={profile?.id ?? null} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} onSaveRegularAbsence={saveOwnRegularAbsence} />}
     {screen === 'contentPlan' && contentPlanSection && <ContentPlanScreen title={contentPlanSection.title} description={contentPlanSection.description || 'Публикации, съёмки и разработка контента'} entries={contentPlanItems} onBack={() => setScreen('hub')} onSave={saveContentPlanItem} onDelete={deleteContentPlanItem} />}
     {screen === 'custom' && activeSection && <CustomSectionScreen section={activeSection} onBack={() => setScreen('hub')} />}
   </div>
