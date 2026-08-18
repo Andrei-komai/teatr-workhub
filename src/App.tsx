@@ -216,6 +216,25 @@ function ParticipantAvatar({ participant, editable, uploading, onSelect }: { par
   </label>
 }
 
+function WorkhubMedia() {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    video.muted = true
+    video.play().catch(() => setIsPlaying(false))
+  }, [])
+
+  return <div className="workhub-media" aria-hidden="true">
+    <img className="workhub-poster" src={`${import.meta.env.BASE_URL}workhub-hero.webp`} alt="" />
+    <video ref={videoRef} className={`workhub-video${isPlaying ? ' is-playing' : ''}`} autoPlay muted loop playsInline preload="metadata" poster={`${import.meta.env.BASE_URL}workhub-hero.webp`} onPlaying={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onError={() => setIsPlaying(false)}>
+      <source src={`${import.meta.env.BASE_URL}workhub-hero.mp4`} type="video/mp4" />
+    </video>
+  </div>
+}
+
 function materialFilePaths(item: Material) {
   return Array.from(new Set([
     ...item.sourceFiles,
@@ -348,11 +367,16 @@ function App() {
     const token = localStorage.getItem(HUB_SESSION_KEY)
     if (!token) { setHubAccess('locked'); return }
 
+    // Open the shell immediately for a previously issued token. Supabase data
+    // remains protected by the personal session and database policies.
+    setHubAccess('unlocked')
     let cancelled = false
     supabase.rpc('validate_hub_session', { session_token: token }).then(({ data, error }) => {
       if (cancelled) return
-      if (!error && data === true) setHubAccess('unlocked')
-      else { localStorage.removeItem(HUB_SESSION_KEY); setHubAccess('locked') }
+      if (!error && data !== true) {
+        localStorage.removeItem(HUB_SESSION_KEY)
+        setHubAccess('locked')
+      }
     })
     return () => { cancelled = true }
   }, [])
@@ -925,7 +949,7 @@ function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSch
   const customSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && section.id !== contentPlanSection?.id)
   const accessLabel = (allowed: boolean) => !profile ? 'Личный вход' : !allowed ? 'Нет доступа' : profile.role === 'participant' ? 'Только просмотр' : 'Есть доступ'
   const unavailableClass = (allowed: boolean) => `module-card${profile && !allowed ? ' unavailable' : ''}`
-  return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><div className="workhub-media" aria-hidden="true"><img className="workhub-poster" src={`${import.meta.env.BASE_URL}workhub-hero.webp`} alt="" /><video className="workhub-video" autoPlay muted loop playsInline preload="metadata" poster={`${import.meta.env.BASE_URL}workhub-hero.webp`}><source src={`${import.meta.env.BASE_URL}workhub-hero.mp4`} type="video/mp4" /></video></div></section><section className="module-grid" aria-label="Разделы театра">
+  return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><WorkhubMedia /></section><section className="module-grid" aria-label="Разделы театра">
     {collectionSection && <button className={unavailableClass(canOpenCollection)} type="button" disabled={Boolean(profile) && !canOpenCollection} onClick={onCollection}><ModuleIcon name="collection" /><span className="module-copy"><b>{collectionSection.title}</b><small>{collectionSection.description || 'Ссылки, файлы, идеи и комментарии'}</small></span><span className="access-chip">{accessLabel(canOpenCollection)}</span><span>→</span></button>}
     {calendarSection && <button className={unavailableClass(canOpenCalendar)} type="button" disabled={Boolean(profile) && !canOpenCalendar} onClick={onCalendar}><ModuleIcon name="calendar" /><span className="module-copy"><b>{calendarSection.title}</b><small>{calendarSection.description || 'Показы, репетиции и события'}</small></span><span className="access-chip">{accessLabel(canOpenCalendar)}</span><span>→</span></button>}
     <button className={unavailableClass(canInvite)} type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><ModuleIcon name="settings" /><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, личные пароли и общий пароль</small></span><span className="access-chip">{accessLabel(canInvite)}</span><span>→</span></button>

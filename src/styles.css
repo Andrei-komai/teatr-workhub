@@ -63,8 +63,9 @@ h1, h2, p { margin-top: 0; }
 .hub-hero > div { display: flex; flex: 1 1 42%; flex-direction: column; justify-content: center; min-width: 300px; padding-right: 22px; }
 .workhub-media { position: relative; width: min(58%, 700px); height: 158px; min-height: 158px; overflow: hidden; border-left: 1px solid #4c4c4c; background: var(--ink); }
 .workhub-poster, .workhub-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; mix-blend-mode: screen; }
-.workhub-poster { display: none; }
-.workhub-video { display: block; }
+.workhub-poster { display: block; }
+.workhub-video { display: block; opacity: 0; transition: opacity .2s ease; }
+.workhub-video.is-playing { opacity: 1; }
 .eyebrow { margin-bottom: 8px; text-transform: uppercase; letter-spacing: .14em; font-size: .76rem; }
 .eyebrow.inverse { color: #c9c9c3; }
 
@@ -547,6 +548,5 @@ h1, h2, p { margin-top: 0; }
 
 @media (prefers-reduced-motion: reduce) {
   .workhub-video { display: none; }
-  .workhub-poster { display: block; }
   .calendar-stage { animation: none; }
 }

@@ -1,28 +1,76 @@
-const CACHE = 'tam-workhub-v5'
+const CACHE = 'tam-workhub-v6'
 const APP_SHELL = ['./', './manifest.webmanifest', './tam-logo.jpg']
+const NAVIGATION_TIMEOUT_MS = 4000
+
+async function fetchWithTimeout(request, timeoutMs) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(request, { signal: controller.signal })
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function offlineShell() {
+  return new Response(
+    '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#13140c"><title>Т.А.М.</title><body style="margin:0;background:#13140c;color:#f6f6f3;font:18px Arial,sans-serif;display:grid;place-items:center;min-height:100vh;text-align:center"><main><b style="font-size:32px">Т·А·М</b><p>Нет соединения с интернетом.</p><button onclick="location.reload()" style="font:inherit;padding:10px 16px">Повторить</button></main></body></html>',
+    { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+  )
+}
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)))
-  self.skipWaiting()
+  event.waitUntil(
+    Promise.all([
+      caches.open(CACHE).then((cache) => Promise.allSettled(APP_SHELL.map((url) => cache.add(url)))),
+      self.skipWaiting(),
+    ]),
+  )
 })
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))),
+    Promise.all([
+      caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))),
+      self.clients.claim(),
+    ]),
   )
-  self.clients.claim()
 })
 
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') return
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const copy = response.clone()
-        caches.open(CACHE).then((cache) => cache.put(event.request, copy))
+  const requestUrl = new URL(event.request.url)
+  if (requestUrl.origin !== self.location.origin) return
+
+  if (event.request.mode === 'navigate') {
+    event.respondWith((async () => {
+      const cache = await caches.open(CACHE)
+      try {
+        const response = await fetchWithTimeout(event.request, NAVIGATION_TIMEOUT_MS)
+        if (response.ok) await cache.put('./', response.clone())
         return response
-      })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match('./'))),
+      } catch {
+        return await cache.match(event.request, { ignoreSearch: true }) || await cache.match('./') || offlineShell()
+      }
+    })())
+    return
+  }
+
+  // Stream media normally instead of adding it to the app-shell cache.
+  if (event.request.destination === 'video' || event.request.destination === 'audio') return
+  event.respondWith(
+    (async () => {
+      try {
+        const response = await fetch(event.request)
+        if (response.ok) {
+          const cache = await caches.open(CACHE)
+          await cache.put(event.request, response.clone())
+        }
+        return response
+      } catch {
+        return await caches.match(event.request) || Response.error()
+      }
+    })(),
   )
 })
 
