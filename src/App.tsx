@@ -227,7 +227,7 @@ function WorkhubMedia() {
     video.play().catch(() => setIsPlaying(false))
   }, [])
 
-  return <div className="workhub-media" aria-hidden="true">
+  return <div className={`workhub-media${isPlaying ? ' is-playing' : ''}`} aria-hidden="true">
     <img className="workhub-poster" src={`${import.meta.env.BASE_URL}workhub-hero.webp`} alt="" />
     <video ref={videoRef} className={`workhub-video${isPlaying ? ' is-playing' : ''}`} autoPlay muted loop playsInline preload="metadata" poster={`${import.meta.env.BASE_URL}workhub-hero.webp`} onPlaying={() => setIsPlaying(true)} onPause={() => setIsPlaying(false)} onError={() => setIsPlaying(false)}>
       <source src={`${import.meta.env.BASE_URL}workhub-hero.mp4`} type="video/mp4" />
