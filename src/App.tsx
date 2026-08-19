@@ -277,6 +277,7 @@ function App() {
   const [initialDataLoading, setInitialDataLoading] = useState(true)
   const [initialDataError, setInitialDataError] = useState('')
   const [passwordError, setPasswordError] = useState(false)
+  const [hubLoginError, setHubLoginError] = useState('')
   const [session, setSession] = useState<Session | null>(null)
   const [personalSession, setPersonalSession] = useState(() => localStorage.getItem(PERSONAL_SESSION_KEY))
   const [profile, setProfile] = useState<Participant | null>(null)
@@ -452,18 +453,14 @@ function App() {
     if (!token) { setHubAccess('locked'); return }
 
     let cancelled = false
+    setHubAccess('unlocked')
     withTimeout(supabase.rpc('validate_hub_session', { session_token: token }), STARTUP_REQUEST_TIMEOUT).then(({ data, error }) => {
       if (cancelled) return
-      if (!error && data === true) setHubAccess('unlocked')
-      else {
+      if (!error && data === false) {
         localStorage.removeItem(HUB_SESSION_KEY)
         setHubAccess('locked')
       }
-    }).catch(() => {
-      if (cancelled) return
-      setHubAccess('locked')
-      setAppError('Сервер не ответил вовремя. Введите общий пароль ещё раз.')
-    })
+    }).catch(() => undefined)
     return () => { cancelled = true }
   }, [])
 
@@ -543,14 +540,27 @@ function App() {
   }, [activeMaterials, activeFilters, query])
 
   async function unlock(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setPasswordError(false)
+    event.preventDefault(); setPasswordError(false); setHubLoginError('')
     const attempt = String(new FormData(event.currentTarget).get('password'))
-    const { data, error } = await supabase.rpc('login_with_hub_password', { attempt })
+    let result
+    try {
+      result = await withTimeout(supabase.rpc('login_with_hub_password', { attempt }), 15000)
+    } catch {
+      await new Promise((resolve) => window.setTimeout(resolve, 600))
+      try {
+        result = await withTimeout(supabase.rpc('login_with_hub_password', { attempt }), 15000)
+      } catch {
+        setHubLoginError('Не удалось связаться с сервером. Проверьте интернет и нажмите «Войти» ещё раз.')
+        return
+      }
+    }
+    const { data, error } = result
     const response = data as { status?: string; token?: string } | null
     if (!error && response?.status === 'ok' && response.token) {
       localStorage.setItem(HUB_SESSION_KEY, response.token)
       setHubAccess('unlocked')
-    } else setPasswordError(true)
+    } else if (!error && response?.status === 'wrong_password') setPasswordError(true)
+    else setHubLoginError('Сервер не смог проверить пароль. Нажмите «Войти» ещё раз.')
   }
   async function signInWithPersonalPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); setAuthMessage('')
@@ -1017,7 +1027,7 @@ function App() {
 
   if (hubAccess === 'checking' || (hubAccess === 'unlocked' && initialDataLoading)) return <StartupScreen error={initialDataError} />
   if (hubAccess === 'unlocked' && initialDataError) return <StartupScreen error={initialDataError} />
-  if (hubAccess === 'locked') return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1><form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>{installButton}</section>{installHelp}</main>
+  if (hubAccess === 'locked') return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1><form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}{hubLoginError && <p className="form-error">{hubLoginError}</p>}<button className="button button-solid" type="submit">Войти</button></form>{installButton}</section>{installHelp}</main>
 
   return <div className="app-shell">
     <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip">{profile && <button className="profile-notification-button" type="button" aria-label="Настройки уведомлений" onClick={openNotificationSettings}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></svg></button>}{profile ? <ParticipantAvatar participant={profile} editable uploading={uploadingAvatar} onSelect={uploadOwnAvatar} /> : <span className="header-avatar-fallback">О</span>}<span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{profile ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Личный вход</button>}</div></header>
