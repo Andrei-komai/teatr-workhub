@@ -235,6 +235,10 @@ function WorkhubMedia() {
   </div>
 }
 
+function StartupScreen({ error }: { error?: string }) {
+  return <main className="gate-shell"><section className="gate-panel startup-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1>{error ? <><p>{error}</p><button className="button button-solid" type="button" onClick={() => window.location.reload()}>Повторить</button></> : <p>Открываем воркхаб…</p>}</section></main>
+}
+
 function materialFilePaths(item: Material) {
   return Array.from(new Set([
     ...item.sourceFiles,
@@ -249,6 +253,8 @@ function materialTitle(item: Material) {
 
 function App() {
   const [hubAccess, setHubAccess] = useState<'checking' | 'locked' | 'unlocked'>('checking')
+  const [initialDataLoading, setInitialDataLoading] = useState(true)
+  const [initialDataError, setInitialDataError] = useState('')
   const [passwordError, setPasswordError] = useState(false)
   const [session, setSession] = useState<Session | null>(null)
   const [personalSession, setPersonalSession] = useState(() => localStorage.getItem(PERSONAL_SESSION_KEY))
@@ -306,59 +312,82 @@ function App() {
   const canOpenContentPlan = Boolean(contentPlanSection && profileHasSectionAccess(profile, contentPlanSection.id, sections))
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession) {
-    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); return }
+    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); return true }
     const { data: ownProfile, error: profileError } = await supabase.rpc('get_current_profile')
-    if (profileError) { setAppError(profileError.message); return }
+    if (profileError) { setAppError(profileError.message); return false }
     setAppError('')
     const rawProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
-    const mappedProfile = rawProfile ? (await withAvatarUrls([rawProfile]))[0] : null
+    if (!rawProfile) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); return true }
+
+    const canLoadParticipants = ['developer', 'leader', 'teacher', 'admin'].includes(rawProfile.role)
+    const canLoadMaterials = rawProfile.role === 'developer' || rawProfile.role === 'leader' || rawProfile.sections.includes(COLLECTION_SECTION)
+    const participantsPromise = canLoadParticipants
+      ? supabase.from('profiles').select('*').order('created_at').then(async ({ data, error }) => ({ data: await withAvatarUrls((data ?? []).map(mapParticipant)), error }))
+      : Promise.resolve({ data: [] as Participant[], error: null })
+    const materialsPromise = canLoadMaterials
+      ? supabase.from('materials').select('*').order('created_at')
+      : Promise.resolve({ data: [], error: null })
+
+    const [profileWithAvatar, sectionResult, eventResult, scheduleResult, absenceResult, scheduleNamesResult, contentPlanResult, participantsResult, materialsResult] = await Promise.all([
+      withAvatarUrls([rawProfile]),
+      supabase.from('sections').select('*').order('sort_order'),
+      supabase.from('calendar_events').select('*').order('event_date').order('start_time'),
+      supabase.from('schedule_entries').select('*').order('event_date').order('start_time'),
+      supabase.from('schedule_regular_absences').select('*'),
+      supabase.rpc('get_schedule_participant_names'),
+      supabase.from('content_plan_items').select('*').order('content_date').order('created_at'),
+      participantsPromise,
+      materialsPromise,
+    ])
+
+    const mappedProfile = profileWithAvatar[0] ?? rawProfile
     setProfile(mappedProfile)
-    if (!mappedProfile) { setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); return }
-    const { data: sectionRows, error: sectionError } = await supabase.from('sections').select('*').order('sort_order')
+    const { data: sectionRows, error: sectionError } = sectionResult
     if (sectionError) setAppError(sectionError.message)
     else setSections((sectionRows ?? []).map(mapSection))
-    const { data: eventRows, error: eventError } = await supabase.from('calendar_events').select('*').order('event_date').order('start_time')
+    const { data: eventRows, error: eventError } = eventResult
     if (eventError && eventError.code !== 'PGRST205') setAppError(eventError.message)
     else setCalendarEvents((eventRows ?? []).map(mapCalendarEvent))
-    const { data: scheduleRows, error: scheduleError } = await supabase.from('schedule_entries').select('*').order('event_date').order('start_time')
+    const { data: scheduleRows, error: scheduleError } = scheduleResult
     if (scheduleError && scheduleError.code !== 'PGRST205') setAppError(scheduleError.message)
     else setScheduleEntries((scheduleRows ?? []).map(mapScheduleEntry))
-    const { data: absenceRows, error: absenceError } = await supabase.from('schedule_regular_absences').select('*')
+    const { data: absenceRows, error: absenceError } = absenceResult
     if (absenceError && absenceError.code !== 'PGRST205') setAppError(absenceError.message)
     else setScheduleRegularAbsences((absenceRows ?? []).map(mapScheduleRegularAbsence))
-    const { data: scheduleNames, error: scheduleNamesError } = await supabase.rpc('get_schedule_participant_names')
+    const { data: scheduleNames, error: scheduleNamesError } = scheduleNamesResult
     if (!scheduleNamesError) setScheduleParticipantNames(Object.fromEntries(((scheduleNames ?? []) as Record<string, unknown>[]).map((item) => [String(item.profile_id), String(item.profile_name)])))
-    const { data: contentPlanRows, error: contentPlanError } = await supabase.from('content_plan_items').select('*').order('content_date').order('created_at')
+    const { data: contentPlanRows, error: contentPlanError } = contentPlanResult
     if (contentPlanError && contentPlanError.code !== 'PGRST205') setAppError(contentPlanError.message)
     else setContentPlanItems((contentPlanRows ?? []).map(mapContentPlanItem))
-    if (['developer', 'leader', 'teacher', 'admin'].includes(mappedProfile.role)) {
-      const { data } = await supabase.from('profiles').select('*').order('created_at')
-      setParticipants(await withAvatarUrls((data ?? []).map(mapParticipant)))
+    if (canLoadParticipants) {
+      if (participantsResult.error) setAppError(participantsResult.error.message)
+      else setParticipants(participantsResult.data)
     } else setParticipants([mappedProfile])
-    if (mappedProfile.role === 'developer' || mappedProfile.role === 'leader' || mappedProfile.sections.includes(COLLECTION_SECTION)) {
-      const { data, error } = await supabase.from('materials').select('*').order('created_at')
-      if (error) setAppError(error.message)
+    if (canLoadMaterials) {
+      if (materialsResult.error) setAppError(materialsResult.error.message)
       else {
-        const loadedMaterials = (data ?? []).map(mapMaterial)
+        const loadedMaterials = (materialsResult.data ?? []).map(mapMaterial)
+        setMaterials(loadedMaterials)
         const canPurgeExpired = CONTENT_MANAGER_ROLES.includes(mappedProfile.role)
         const expiredMaterials = canPurgeExpired
           ? loadedMaterials.filter((item) => item.deletedAt && Date.now() - item.deletedAt >= 30 * DAY)
           : []
-        const purgedIds = new Set<string>()
-
-        for (const item of expiredMaterials) {
-          const paths = materialFilePaths(item)
-          if (paths.length) {
-            const { error: storageError } = await supabase.storage.from('materials').remove(paths)
-            if (storageError) continue
+        if (expiredMaterials.length) void (async () => {
+          const purgedIds = new Set<string>()
+          for (const item of expiredMaterials) {
+            const paths = materialFilePaths(item)
+            if (paths.length) {
+              const { error: storageError } = await supabase.storage.from('materials').remove(paths)
+              if (storageError) continue
+            }
+            const { error: deleteError } = await supabase.rpc('delete_material_forever', { material_id: item.id })
+            if (!deleteError) purgedIds.add(item.id)
           }
-          const { error: deleteError } = await supabase.rpc('delete_material_forever', { material_id: item.id })
-          if (!deleteError) purgedIds.add(item.id)
-        }
-
-        setMaterials(loadedMaterials.filter((item) => !purgedIds.has(item.id)))
+          if (purgedIds.size) setMaterials((current) => current.filter((item) => !purgedIds.has(item.id)))
+        })()
       }
-    }
+    } else setMaterials([])
+    return true
   }
 
   useEffect(() => {
@@ -367,13 +396,11 @@ function App() {
     const token = localStorage.getItem(HUB_SESSION_KEY)
     if (!token) { setHubAccess('locked'); return }
 
-    // Open the shell immediately for a previously issued token. Supabase data
-    // remains protected by the personal session and database policies.
-    setHubAccess('unlocked')
     let cancelled = false
     supabase.rpc('validate_hub_session', { session_token: token }).then(({ data, error }) => {
       if (cancelled) return
-      if (!error && data !== true) {
+      if (!error && data === true) setHubAccess('unlocked')
+      else {
         localStorage.removeItem(HUB_SESSION_KEY)
         setHubAccess('locked')
       }
@@ -382,13 +409,26 @@ function App() {
   }, [])
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => { setSession(data.session); loadData(data.session, personalSession) })
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+    let cancelled = false
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (cancelled) return
+      setSession(data.session)
+      const loaded = await loadData(data.session, personalSession)
+      if (cancelled) return
+      setInitialDataError(loaded ? '' : 'Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
+      setInitialDataLoading(false)
+    }).catch(() => {
+      if (cancelled) return
+      setInitialDataError('Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
+      setInitialDataLoading(false)
+    })
+    const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (event === 'INITIAL_SESSION') return
       setSession(nextSession)
       window.setTimeout(() => loadData(nextSession, personalSession), 0)
       if (nextSession && screen === 'auth') setScreen(returnScreen)
     })
-    return () => listener.subscription.unsubscribe()
+    return () => { cancelled = true; listener.subscription.unsubscribe() }
   }, [])
 
   useEffect(() => {
@@ -908,7 +948,9 @@ function App() {
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
   const visibleAppError = /failed to fetch/i.test(appError) ? 'Нет связи с сервером. Проверьте интернет.' : appError
 
-  if (hubAccess !== 'unlocked') return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1>{hubAccess === 'checking' ? <p>Проверяем доступ…</p> : <form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>}{installButton}</section>{installHelp}</main>
+  if (hubAccess === 'checking' || (hubAccess === 'unlocked' && initialDataLoading)) return <StartupScreen error={initialDataError} />
+  if (hubAccess === 'unlocked' && initialDataError) return <StartupScreen error={initialDataError} />
+  if (hubAccess === 'locked') return <main className="gate-shell"><section className="gate-panel"><div className="logo-mark">Т·А·М</div><p className="eyebrow">Камерный театр-лаборатория</p><h1>Рабочий воркхаб</h1><form onSubmit={unlock}><label htmlFor="hub-password">Общий пароль</label><input id="hub-password" name="password" type="password" autoComplete="current-password" autoFocus />{passwordError && <p className="form-error">Неверный пароль</p>}<button className="button button-solid" type="submit">Войти</button></form>{installButton}</section>{installHelp}</main>
 
   return <div className="app-shell">
     <header className="app-header"><button className="brand" type="button" onClick={() => setScreen('hub')}><span className="logo-mark small">Т·А·М</span><span><b>Камерный театр-лаборатория Т.А.М.</b><small>Рабочий воркхаб</small></span></button><div className="account-area">{installButton}<div className="user-chip">{profile && <button className="profile-notification-button" type="button" aria-label="Настройки уведомлений" onClick={openNotificationSettings}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></svg></button>}{profile ? <ParticipantAvatar participant={profile} editable uploading={uploadingAvatar} onSelect={uploadOwnAvatar} /> : <span className="header-avatar-fallback">О</span>}<span><b>{profile?.name ?? 'Общий вход'}</b><small>{profile ? ROLE_LABELS[profile.role] : 'Без личного входа'}</small></span></div>{profile ? <button className="text-button header-logout" type="button" onClick={logout}>Выйти</button> : <button className="text-button header-logout" type="button" onClick={() => { setReturnScreen('hub'); setScreen('auth') }}>Личный вход</button>}</div></header>

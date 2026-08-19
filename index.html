@@ -8,13 +8,19 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <meta name="apple-mobile-web-app-title" content="Т.А.М." />
     <meta name="description" content="Рабочий воркхаб Камерного театра-лаборатории Т.А.М." />
+    <style>
+      html, body { margin: 0; min-width: 320px; min-height: 100%; background: #13140c; }
+      #app-boot { min-height: 100vh; display: grid; place-items: center; box-sizing: border-box; padding: 24px; background: #13140c; color: #f6f6f3; font: 18px Arial, sans-serif; text-align: center; }
+      #app-boot b { display: grid; place-items: center; width: 74px; height: 74px; margin: 0 auto 18px; border: 1px solid currentColor; border-radius: 50%; }
+      #app-boot p { margin: 0; color: #c9c9c3; }
+    </style>
     <link rel="icon" href="/teatr-workhub/tam-logo.jpg" />
     <link rel="apple-touch-icon" href="/teatr-workhub/icon-192.png" />
     <link rel="manifest" href="/teatr-workhub/manifest.webmanifest" />
     <title>Т.А.М. — Рабочий воркхаб</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><main id="app-boot"><section><b>Т·А·М</b><p>Открываем воркхаб…</p></section></main></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

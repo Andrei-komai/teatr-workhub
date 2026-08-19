@@ -374,6 +374,9 @@ h1, h2, p { margin-top: 0; }
 .gate-panel form { display: grid; gap: 9px; margin-top: 26px; }
 .gate-panel input { min-height: 44px; padding: 9px 11px; border: 1px solid #777; border-radius: 8px; background: var(--paper); color: var(--ink); }
 .gate-panel .button-solid { background: var(--paper); color: var(--ink); border-color: var(--paper); }
+.startup-panel { display: grid; gap: 8px; }
+.startup-panel p { margin-bottom: 0; color: #c9c9c3; }
+.startup-panel .button { width: fit-content; margin-top: 8px; }
 .form-error { margin: 0; color: #ffaaa6; }
 
 .content-plan-shell { padding-top: 16px; }

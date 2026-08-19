@@ -1,6 +1,7 @@
-const CACHE = 'tam-workhub-v6'
+const CACHE = 'tam-workhub-v7'
 const APP_SHELL = ['./', './manifest.webmanifest', './tam-logo.jpg']
 const NAVIGATION_TIMEOUT_MS = 4000
+const NAVIGATION_NETWORK_GRACE_MS = 500
 
 async function fetchWithTimeout(request, timeoutMs) {
   const controller = new AbortController()
@@ -17,6 +18,31 @@ function offlineShell() {
     '<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#13140c"><title>Т.А.М.</title><body style="margin:0;background:#13140c;color:#f6f6f3;font:18px Arial,sans-serif;display:grid;place-items:center;min-height:100vh;text-align:center"><main><b style="font-size:32px">Т·А·М</b><p>Нет соединения с интернетом.</p><button onclick="location.reload()" style="font:inherit;padding:10px 16px">Повторить</button></main></body></html>',
     { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
   )
+}
+
+async function updateNavigationCache(request) {
+  const response = await fetchWithTimeout(request, NAVIGATION_TIMEOUT_MS)
+  if (response.ok) {
+    const cache = await caches.open(CACHE)
+    await cache.put('./', response.clone())
+  }
+  return response
+}
+
+async function navigationResponse(request, networkResponse) {
+  const cache = await caches.open(CACHE)
+  const cached = await cache.match(request, { ignoreSearch: true }) || await cache.match('./')
+  if (!cached) {
+    try {
+      return await networkResponse
+    } catch {
+      return offlineShell()
+    }
+  }
+  return Promise.race([
+    networkResponse.catch(() => cached),
+    new Promise((resolve) => setTimeout(() => resolve(cached), NAVIGATION_NETWORK_GRACE_MS)),
+  ])
 }
 
 self.addEventListener('install', (event) => {
@@ -43,16 +69,9 @@ self.addEventListener('fetch', (event) => {
   if (requestUrl.origin !== self.location.origin) return
 
   if (event.request.mode === 'navigate') {
-    event.respondWith((async () => {
-      const cache = await caches.open(CACHE)
-      try {
-        const response = await fetchWithTimeout(event.request, NAVIGATION_TIMEOUT_MS)
-        if (response.ok) await cache.put('./', response.clone())
-        return response
-      } catch {
-        return await cache.match(event.request, { ignoreSearch: true }) || await cache.match('./') || offlineShell()
-      }
-    })())
+    const networkResponse = updateNavigationCache(event.request)
+    event.waitUntil(networkResponse.then(() => undefined).catch(() => undefined))
+    event.respondWith(navigationResponse(event.request, networkResponse))
     return
   }
 
