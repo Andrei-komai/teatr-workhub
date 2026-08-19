@@ -61,6 +61,23 @@ const ROLE_DESCRIPTIONS: Record<Role, string> = {
   participant: 'Работа в доступных разделах без удаления материалов.',
 }
 
+const STARTUP_REQUEST_TIMEOUT = 8000
+const BACKGROUND_REQUEST_TIMEOUT = 12000
+
+async function withTimeout<T>(request: PromiseLike<T>, timeoutMs: number): Promise<T> {
+  let timeoutId = 0
+  try {
+    return await Promise.race([
+      Promise.resolve(request),
+      new Promise<T>((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error('REQUEST_TIMEOUT')), timeoutMs)
+      }),
+    ])
+  } finally {
+    window.clearTimeout(timeoutId)
+  }
+}
+
 function mapNotificationPreferences(value: Record<string, unknown>): NotificationPreferences {
   return {
     eventsEnabled: value.events_enabled !== false,
@@ -125,8 +142,12 @@ function mapParticipant(row: Record<string, unknown>): Participant {
 async function withAvatarUrls(participants: Participant[]) {
   return Promise.all(participants.map(async (participant) => {
     if (!participant.avatarPath) return participant
-    const { data, error } = await supabase.storage.from('avatars').createSignedUrl(participant.avatarPath, 60 * 60)
-    return { ...participant, avatarUrl: error ? null : data.signedUrl }
+    try {
+      const { data, error } = await withTimeout(supabase.storage.from('avatars').createSignedUrl(participant.avatarPath, 24 * 60 * 60), 5000)
+      return { ...participant, avatarUrl: error ? null : data.signedUrl }
+    } catch {
+      return participant
+    }
   }))
 }
 function mapSection(row: Record<string, unknown>): WorkspaceSection {
@@ -313,46 +334,68 @@ function App() {
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession, onReady?: () => void) {
     if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); return true }
-    const { data: ownProfile, error: profileError } = await supabase.rpc('get_current_profile')
+    const sectionRequest = supabase.from('sections').select('*').order('sort_order')
+    let ownProfileResult
+    try {
+      ownProfileResult = await withTimeout(supabase.rpc('get_current_profile'), STARTUP_REQUEST_TIMEOUT)
+    } catch {
+      setAppError('Сервер не ответил вовремя. Проверьте соединение и попробуйте ещё раз.')
+      return false
+    }
+    const { data: ownProfile, error: profileError } = ownProfileResult
     if (profileError) { setAppError(profileError.message); return false }
     setAppError('')
     const rawProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
     if (!rawProfile) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); return true }
 
+    setProfile(rawProfile)
+    let sectionResult
+    try {
+      sectionResult = await withTimeout(sectionRequest, STARTUP_REQUEST_TIMEOUT)
+    } catch {
+      setAppError('Не удалось быстро загрузить разделы. Проверьте соединение и попробуйте ещё раз.')
+      return false
+    }
+    const { data: sectionRows, error: sectionError } = sectionResult
+    if (sectionError) { setAppError(sectionError.message); return false }
+    setSections((sectionRows ?? []).map(mapSection))
+    onReady?.()
+
+    void withAvatarUrls([rawProfile]).then(([profileWithAvatar]) => {
+      if (!profileWithAvatar) return
+      setProfile((current) => current?.id === profileWithAvatar.id ? profileWithAvatar : current)
+    })
+
     const canLoadParticipants = ['developer', 'leader', 'teacher', 'admin'].includes(rawProfile.role)
     const canLoadMaterials = rawProfile.role === 'developer' || rawProfile.role === 'leader' || rawProfile.sections.includes(COLLECTION_SECTION)
     const participantsPromise = canLoadParticipants
-      ? supabase.from('profiles').select('*').order('created_at').then(async ({ data, error }) => ({ data: await withAvatarUrls((data ?? []).map(mapParticipant)), error }))
+      ? supabase.from('profiles').select('*').order('created_at')
       : Promise.resolve({ data: [] as Participant[], error: null })
     const materialsPromise = canLoadMaterials
       ? supabase.from('materials').select('*').order('created_at')
       : Promise.resolve({ data: [], error: null })
-    const profileWithAvatarPromise = withAvatarUrls([rawProfile])
-    const sectionPromise = supabase.from('sections').select('*').order('sort_order')
     const eventPromise = supabase.from('calendar_events').select('*').order('event_date').order('start_time')
     const schedulePromise = supabase.from('schedule_entries').select('*').order('event_date').order('start_time')
     const absencePromise = supabase.from('schedule_regular_absences').select('*')
     const scheduleNamesPromise = supabase.rpc('get_schedule_participant_names')
     const contentPlanPromise = supabase.from('content_plan_items').select('*').order('content_date').order('created_at')
 
-    const [profileWithAvatar, sectionResult] = await Promise.all([profileWithAvatarPromise, sectionPromise])
-
-    const mappedProfile = profileWithAvatar[0] ?? rawProfile
-    setProfile(mappedProfile)
-    const { data: sectionRows, error: sectionError } = sectionResult
-    if (sectionError) { setAppError(sectionError.message); return false }
-    setSections((sectionRows ?? []).map(mapSection))
-    onReady?.()
-
-    const [eventResult, scheduleResult, absenceResult, scheduleNamesResult, contentPlanResult, participantsResult, materialsResult] = await Promise.all([
-      eventPromise,
-      schedulePromise,
-      absencePromise,
-      scheduleNamesPromise,
-      contentPlanPromise,
-      participantsPromise,
-      materialsPromise,
-    ])
+    let backgroundResults
+    try {
+      backgroundResults = await withTimeout(Promise.all([
+        eventPromise,
+        schedulePromise,
+        absencePromise,
+        scheduleNamesPromise,
+        contentPlanPromise,
+        participantsPromise,
+        materialsPromise,
+      ]), BACKGROUND_REQUEST_TIMEOUT)
+    } catch {
+      setAppError('Часть данных загружается дольше обычного. Главный экран уже доступен — попробуйте открыть раздел ещё раз.')
+      return true
+    }
+    const [eventResult, scheduleResult, absenceResult, scheduleNamesResult, contentPlanResult, participantsResult, materialsResult] = backgroundResults
     const { data: eventRows, error: eventError } = eventResult
     if (eventError && eventError.code !== 'PGRST205') setAppError(eventError.message)
     else setCalendarEvents((eventRows ?? []).map(mapCalendarEvent))
@@ -369,14 +412,18 @@ function App() {
     else setContentPlanItems((contentPlanRows ?? []).map(mapContentPlanItem))
     if (canLoadParticipants) {
       if (participantsResult.error) setAppError(participantsResult.error.message)
-      else setParticipants(participantsResult.data)
-    } else setParticipants([mappedProfile])
+      else {
+        const loadedParticipants = (participantsResult.data ?? []).map(mapParticipant)
+        setParticipants(loadedParticipants)
+        void withAvatarUrls(loadedParticipants).then(setParticipants)
+      }
+    } else setParticipants([rawProfile])
     if (canLoadMaterials) {
       if (materialsResult.error) setAppError(materialsResult.error.message)
       else {
         const loadedMaterials = (materialsResult.data ?? []).map(mapMaterial)
         setMaterials(loadedMaterials)
-        const canPurgeExpired = CONTENT_MANAGER_ROLES.includes(mappedProfile.role)
+        const canPurgeExpired = CONTENT_MANAGER_ROLES.includes(rawProfile.role)
         const expiredMaterials = canPurgeExpired
           ? loadedMaterials.filter((item) => item.deletedAt && Date.now() - item.deletedAt >= 30 * DAY)
           : []
@@ -405,20 +452,24 @@ function App() {
     if (!token) { setHubAccess('locked'); return }
 
     let cancelled = false
-    supabase.rpc('validate_hub_session', { session_token: token }).then(({ data, error }) => {
+    withTimeout(supabase.rpc('validate_hub_session', { session_token: token }), STARTUP_REQUEST_TIMEOUT).then(({ data, error }) => {
       if (cancelled) return
       if (!error && data === true) setHubAccess('unlocked')
       else {
         localStorage.removeItem(HUB_SESSION_KEY)
         setHubAccess('locked')
       }
+    }).catch(() => {
+      if (cancelled) return
+      setHubAccess('locked')
+      setAppError('Сервер не ответил вовремя. Введите общий пароль ещё раз.')
     })
     return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
     let cancelled = false
-    supabase.auth.getSession().then(async ({ data }) => {
+    withTimeout(supabase.auth.getSession(), STARTUP_REQUEST_TIMEOUT).then(async ({ data }) => {
       if (cancelled) return
       setSession(data.session)
       let revealed = false
