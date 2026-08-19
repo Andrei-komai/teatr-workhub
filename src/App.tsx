@@ -311,7 +311,7 @@ function App() {
   const canOpenSchedule = Boolean(scheduleSection && profileHasSectionAccess(profile, scheduleSection.id, sections))
   const canOpenContentPlan = Boolean(contentPlanSection && profileHasSectionAccess(profile, contentPlanSection.id, sections))
 
-  async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession) {
+  async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession, onReady?: () => void) {
     if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); return true }
     const { data: ownProfile, error: profileError } = await supabase.rpc('get_current_profile')
     if (profileError) { setAppError(profileError.message); return false }
@@ -327,24 +327,32 @@ function App() {
     const materialsPromise = canLoadMaterials
       ? supabase.from('materials').select('*').order('created_at')
       : Promise.resolve({ data: [], error: null })
+    const profileWithAvatarPromise = withAvatarUrls([rawProfile])
+    const sectionPromise = supabase.from('sections').select('*').order('sort_order')
+    const eventPromise = supabase.from('calendar_events').select('*').order('event_date').order('start_time')
+    const schedulePromise = supabase.from('schedule_entries').select('*').order('event_date').order('start_time')
+    const absencePromise = supabase.from('schedule_regular_absences').select('*')
+    const scheduleNamesPromise = supabase.rpc('get_schedule_participant_names')
+    const contentPlanPromise = supabase.from('content_plan_items').select('*').order('content_date').order('created_at')
 
-    const [profileWithAvatar, sectionResult, eventResult, scheduleResult, absenceResult, scheduleNamesResult, contentPlanResult, participantsResult, materialsResult] = await Promise.all([
-      withAvatarUrls([rawProfile]),
-      supabase.from('sections').select('*').order('sort_order'),
-      supabase.from('calendar_events').select('*').order('event_date').order('start_time'),
-      supabase.from('schedule_entries').select('*').order('event_date').order('start_time'),
-      supabase.from('schedule_regular_absences').select('*'),
-      supabase.rpc('get_schedule_participant_names'),
-      supabase.from('content_plan_items').select('*').order('content_date').order('created_at'),
-      participantsPromise,
-      materialsPromise,
-    ])
+    const [profileWithAvatar, sectionResult] = await Promise.all([profileWithAvatarPromise, sectionPromise])
 
     const mappedProfile = profileWithAvatar[0] ?? rawProfile
     setProfile(mappedProfile)
     const { data: sectionRows, error: sectionError } = sectionResult
-    if (sectionError) setAppError(sectionError.message)
-    else setSections((sectionRows ?? []).map(mapSection))
+    if (sectionError) { setAppError(sectionError.message); return false }
+    setSections((sectionRows ?? []).map(mapSection))
+    onReady?.()
+
+    const [eventResult, scheduleResult, absenceResult, scheduleNamesResult, contentPlanResult, participantsResult, materialsResult] = await Promise.all([
+      eventPromise,
+      schedulePromise,
+      absencePromise,
+      scheduleNamesPromise,
+      contentPlanPromise,
+      participantsPromise,
+      materialsPromise,
+    ])
     const { data: eventRows, error: eventError } = eventResult
     if (eventError && eventError.code !== 'PGRST205') setAppError(eventError.message)
     else setCalendarEvents((eventRows ?? []).map(mapCalendarEvent))
@@ -413,10 +421,18 @@ function App() {
     supabase.auth.getSession().then(async ({ data }) => {
       if (cancelled) return
       setSession(data.session)
-      const loaded = await loadData(data.session, personalSession)
+      let revealed = false
+      const loaded = await loadData(data.session, personalSession, () => {
+        revealed = true
+        if (cancelled) return
+        setInitialDataError('')
+        setInitialDataLoading(false)
+      })
       if (cancelled) return
-      setInitialDataError(loaded ? '' : 'Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
-      setInitialDataLoading(false)
+      if (!revealed) {
+        setInitialDataError(loaded ? '' : 'Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
+        setInitialDataLoading(false)
+      }
     }).catch(() => {
       if (cancelled) return
       setInitialDataError('Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
