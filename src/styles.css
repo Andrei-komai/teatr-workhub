@@ -23,8 +23,13 @@ button { color: inherit; }
 button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px solid #8b8b86; outline-offset: 2px; }
 h1, h2, p { margin-top: 0; }
 
-.app-shell { width: min(1280px, 100%); min-height: 100vh; margin: 0 auto; padding: max(18px, env(safe-area-inset-top)) 18px 18px; background: var(--paper); }
+.app-shell { width: min(1280px, 100%); min-height: 100vh; margin: 0 auto; padding: max(18px, env(safe-area-inset-top)) 18px 18px; background: var(--paper); animation: app-shell-enter .32s cubic-bezier(.2, .8, .2, 1) both; }
 .app-shell::before { content: ""; position: fixed; z-index: 49; top: 0; right: 0; left: 0; height: max(18px, env(safe-area-inset-top)); background: var(--ink); pointer-events: none; }
+@keyframes app-shell-enter { from { opacity: 0; } to { opacity: 1; } }
+@keyframes screen-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes module-card-enter { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes modal-enter { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: translateY(0) scale(1); } }
+.screen-stage { animation: screen-enter .3s cubic-bezier(.2, .8, .2, 1) both; }
 .app-header { position: sticky; top: max(18px, env(safe-area-inset-top)); z-index: 50; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 16px; background: var(--ink); color: var(--paper); }
 .brand { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 .brand > span:last-child { display: grid; gap: 2px; }
@@ -63,15 +68,23 @@ h1, h2, p { margin-top: 0; }
 .hub-hero > div { display: flex; flex: 1 1 42%; flex-direction: column; justify-content: center; min-width: 300px; padding-right: 22px; }
 .workhub-media { position: relative; width: min(58%, 700px); height: 158px; min-height: 158px; overflow: hidden; border-left: 1px solid #4c4c4c; background: var(--ink); }
 .workhub-poster, .workhub-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; object-position: center; mix-blend-mode: screen; }
-.workhub-poster { display: block; }
+.workhub-poster { display: block; opacity: 1; transition: opacity .52s cubic-bezier(.2, .8, .2, 1); }
 .workhub-media.is-playing .workhub-poster { opacity: 0; }
-.workhub-video { display: block; opacity: 0; transition: opacity .2s ease; }
+.workhub-video { display: block; opacity: 0; transition: opacity .52s cubic-bezier(.2, .8, .2, 1); }
 .workhub-video.is-playing { opacity: 1; }
 .eyebrow { margin-bottom: 8px; text-transform: uppercase; letter-spacing: .14em; font-size: .76rem; }
 .eyebrow.inverse { color: #c9c9c3; }
 
 .module-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; padding-top: 16px; }
-.module-card { min-height: 104px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 13px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; cursor: pointer; }
+.module-card { min-height: 104px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 13px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #fff; text-align: left; cursor: pointer; animation: module-card-enter .38s cubic-bezier(.2, .8, .2, 1) both; transition: border-color .2s ease, background-color .2s ease, color .2s ease, transform .2s ease; }
+.module-card:nth-child(1) { animation-delay: .05s; }
+.module-card:nth-child(2) { animation-delay: .1s; }
+.module-card:nth-child(3) { animation-delay: .15s; }
+.module-card:nth-child(4) { animation-delay: .2s; }
+.module-card:nth-child(5) { animation-delay: .25s; }
+.module-card:nth-child(6) { animation-delay: .3s; }
+.module-card:nth-child(7) { animation-delay: .35s; }
+.module-card:nth-child(8) { animation-delay: .4s; }
 .module-card:enabled:hover { border-color: var(--ink); transform: translateY(-1px); }
 .module-card:disabled { cursor: default; }
 .module-card.muted { opacity: .62; }
@@ -103,7 +116,7 @@ h1, h2, p { margin-top: 0; }
 .section-management-row form > div { display: flex; gap: 7px; }
 .settings-section-management { margin-right: 0; margin-left: 0; }
 
-.button, .icon-button, .text-button, .filter { border: 1px solid var(--line); background: transparent; cursor: pointer; }
+.button, .icon-button, .text-button, .filter { border: 1px solid var(--line); background: transparent; cursor: pointer; transition: border-color .18s ease, background-color .18s ease, color .18s ease, transform .18s ease; }
 .button { min-height: 38px; padding: 7px 12px; border-radius: 8px; }
 .button:hover, .filter:hover { border-color: var(--ink); }
 .button-solid { background: var(--ink); color: var(--paper); border-color: var(--ink); }
@@ -115,7 +128,8 @@ h1, h2, p { margin-top: 0; }
 .text-button:hover { border-color: var(--line); }
 .danger { color: #9a221f; }
 
-.modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / .72); }
+.modal-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / .72); animation: app-shell-enter .18s ease-out both; }
+.modal-backdrop > * { animation: modal-enter .24s cubic-bezier(.2, .8, .2, 1) both; }
 .install-modal { position: relative; width: min(480px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
 .notification-modal { position: relative; width: min(620px, 100%); max-height: calc(100vh - 36px); overflow: auto; padding: 24px; border: 1px solid var(--ink); border-radius: 12px; background: var(--paper); color: var(--ink); box-shadow: 0 20px 70px rgb(0 0 0 / .35); }
 .notification-modal h2 { margin-bottom: 8px; text-transform: uppercase; }
@@ -189,7 +203,7 @@ h1, h2, p { margin-top: 0; }
 .calendar-view-switch button.active { background: var(--ink); color: var(--paper); }
 .calendar-period { display: flex; align-items: center; gap: 6px; }
 .calendar-today { min-height: 36px; }
-.calendar-stage { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 12px 12px; background: #fff; overflow: hidden; animation: calendar-change .2s ease-out; }
+.calendar-stage { border: 1px solid var(--line); border-top: 0; border-radius: 0 0 12px 12px; background: #fff; overflow: hidden; animation: calendar-change .28s cubic-bezier(.2, .8, .2, 1); }
 @keyframes calendar-change { from { opacity: .35; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 .calendar-weekdays { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-bottom: 1px solid var(--line); }
 .calendar-weekdays span { padding: 8px; color: var(--muted); text-align: center; font-size: .76rem; text-transform: uppercase; letter-spacing: .08em; }
@@ -374,7 +388,7 @@ h1, h2, p { margin-top: 0; }
 .gate-panel form { display: grid; gap: 9px; margin-top: 26px; }
 .gate-panel input { min-height: 44px; padding: 9px 11px; border: 1px solid #777; border-radius: 8px; background: var(--paper); color: var(--ink); }
 .gate-panel .button-solid { background: var(--paper); color: var(--ink); border-color: var(--paper); }
-.startup-panel { display: grid; gap: 8px; }
+.startup-panel { display: grid; gap: 8px; animation: modal-enter .32s cubic-bezier(.2, .8, .2, 1) both; }
 .startup-panel p { margin-bottom: 0; color: #c9c9c3; }
 .startup-panel .button { width: fit-content; margin-top: 8px; }
 .form-error { margin: 0; color: #ffaaa6; }
@@ -551,6 +565,7 @@ h1, h2, p { margin-top: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workhub-video { display: none; }
-  .calendar-stage { animation: none; }
+  .app-shell, .screen-stage, .module-card, .modal-backdrop, .modal-backdrop > *, .startup-panel, .calendar-stage { animation: none; opacity: 1; transform: none; }
+  .workhub-video { display: none; transition: none; }
+  .workhub-poster { transition: none; }
 }
