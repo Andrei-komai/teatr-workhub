@@ -466,33 +466,55 @@ function App() {
 
   useEffect(() => {
     let cancelled = false
-    withTimeout(supabase.auth.getSession(), STARTUP_REQUEST_TIMEOUT).then(async ({ data }) => {
+    const startupWatchdog = window.setTimeout(() => {
       if (cancelled) return
-      setSession(data.session)
+      setInitialDataError('Сервер отвечает слишком долго. Нажмите «Повторить» — бесконечной загрузки больше не будет.')
+      setInitialDataLoading(false)
+    }, STARTUP_REQUEST_TIMEOUT + 2000)
+
+    const revealInitialData = async (activeSession: Session | null, activePersonalSession: string | null) => {
       let revealed = false
-      const loaded = await loadData(data.session, personalSession, () => {
+      const loaded = await loadData(activeSession, activePersonalSession, () => {
         revealed = true
         if (cancelled) return
+        window.clearTimeout(startupWatchdog)
         setInitialDataError('')
         setInitialDataLoading(false)
       })
       if (cancelled) return
       if (!revealed) {
+        window.clearTimeout(startupWatchdog)
         setInitialDataError(loaded ? '' : 'Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
         setInitialDataLoading(false)
       }
-    }).catch(() => {
-      if (cancelled) return
-      setInitialDataError('Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
-      setInitialDataLoading(false)
-    })
+    }
+
+    if (personalSession) {
+      void revealInitialData(null, personalSession)
+      void withTimeout(supabase.auth.getSession(), STARTUP_REQUEST_TIMEOUT).then(({ data }) => {
+        if (!cancelled) setSession(data.session)
+      }).catch(() => undefined)
+    } else {
+      withTimeout(supabase.auth.getSession(), STARTUP_REQUEST_TIMEOUT).then(({ data }) => {
+        if (cancelled) return
+        setSession(data.session)
+        return revealInitialData(data.session, null)
+      }).catch(() => {
+        if (cancelled) return
+        window.clearTimeout(startupWatchdog)
+        setInitialDataError('Не удалось загрузить ваш профиль. Проверьте соединение и попробуйте ещё раз.')
+        setInitialDataLoading(false)
+      })
+    }
+
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (cancelled) return
       if (event === 'INITIAL_SESSION') return
       setSession(nextSession)
       window.setTimeout(() => loadData(nextSession, personalSession), 0)
       if (nextSession && screen === 'auth') setScreen(returnScreen)
     })
-    return () => { cancelled = true; listener.subscription.unsubscribe() }
+    return () => { cancelled = true; window.clearTimeout(startupWatchdog); listener.subscription.unsubscribe() }
   }, [])
 
   useEffect(() => {
