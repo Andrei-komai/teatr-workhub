@@ -102,6 +102,7 @@ export function YandexStorageScreen({ title, description, onBack }: { title: str
   const [error, setError] = useState('')
   const [reloadKey, setReloadKey] = useState(0)
   const [previewItem, setPreviewItem] = useState<YandexResource | null>(null)
+  const [previewError, setPreviewError] = useState(false)
   const currentPath = trail[trail.length - 1].path
 
   useEffect(() => {
@@ -155,6 +156,11 @@ export function YandexStorageScreen({ title, description, onBack }: { title: str
     setTrail((current) => current.slice(0, index + 1))
   }
 
+  function openPreview(item: YandexResource) {
+    setPreviewError(false)
+    setPreviewItem(item)
+  }
+
   const activePreviewKind = previewItem ? previewKind(previewItem) : null
   const previewUrl = previewItem ? (activePreviewKind === 'image' ? previewItem.preview || previewItem.file : previewItem.file) : ''
 
@@ -181,13 +187,13 @@ export function YandexStorageScreen({ title, description, onBack }: { title: str
         {sortedItems.map((item) => {
           const canPreview = Boolean(previewKind(item) && (item.file || item.preview))
           return <article className={`storage-card ${item.type === 'dir' ? 'folder' : 'file'}`} key={item.path}>
-            <button className="storage-card-main" type="button" onClick={() => item.type === 'dir' ? openFolder(item) : canPreview && setPreviewItem(item)} disabled={item.type === 'file' && !canPreview}>
+            <button className="storage-card-main" type="button" onClick={() => item.type === 'dir' ? openFolder(item) : canPreview && openPreview(item)} disabled={item.type === 'file' && !canPreview}>
               <span className="storage-resource-icon"><ResourceIcon item={item} /></span>
               <span className="storage-resource-copy"><b>{item.name}</b><small>{item.type === 'dir' ? `Папка${item.modified ? ` · ${formatDate(item.modified)}` : ''}` : [formatSize(item.size), formatDate(item.modified)].filter(Boolean).join(' · ')}</small></span>
               {item.type === 'dir' && <span className="storage-arrow" aria-hidden="true">→</span>}
             </button>
             {item.type === 'file' && <div className="storage-card-actions">
-              {canPreview && <button type="button" onClick={() => setPreviewItem(item)}>Посмотреть</button>}
+              {canPreview && <button type="button" onClick={() => openPreview(item)}>Посмотреть</button>}
               {item.file && <a href={item.file} target="_blank" rel="noreferrer">Скачать</a>}
             </div>}
           </article>
@@ -201,9 +207,10 @@ export function YandexStorageScreen({ title, description, onBack }: { title: str
       <section className="storage-preview" role="dialog" aria-modal="true" aria-label={`Просмотр ${previewItem.name}`} onMouseDown={(event) => event.stopPropagation()}>
         <header><div><b>{previewItem.name}</b><small>{[formatSize(previewItem.size), formatDate(previewItem.modified)].filter(Boolean).join(' · ')}</small></div><button className="icon-button" type="button" aria-label="Закрыть просмотр" onClick={() => setPreviewItem(null)}>×</button></header>
         <div className="storage-preview-body">
-          {activePreviewKind === 'image' && previewUrl && <img src={previewUrl} alt={previewItem.name} />}
-          {activePreviewKind === 'video' && previewUrl && <video src={previewUrl} controls playsInline preload="metadata" />}
-          {activePreviewKind === 'pdf' && previewUrl && <iframe src={previewUrl} title={previewItem.name} />}
+          {activePreviewKind === 'image' && previewUrl && !previewError && <img src={previewUrl} alt={previewItem.name} referrerPolicy="no-referrer" onError={() => setPreviewError(true)} />}
+          {activePreviewKind === 'video' && previewUrl && !previewError && <video src={previewUrl} poster={previewItem.preview} controls playsInline preload="metadata" onError={() => setPreviewError(true)} />}
+          {activePreviewKind === 'pdf' && previewUrl && !previewError && <iframe src={previewUrl} title={previewItem.name} referrerPolicy="no-referrer" onError={() => setPreviewError(true)} />}
+          {previewError && <div className="storage-preview-fallback">{previewItem.preview && <img src={previewItem.preview} alt="" referrerPolicy="no-referrer" />}<b>Этот файл не воспроизводится на устройстве</b><p>{activePreviewKind === 'video' ? 'Для гарантированного просмотра на Android и iPhone используйте видео MP4 с кодеком H.264. Исходный MOV можно скачать или открыть в Яндекс Диске.' : 'Яндекс не отдал предпросмотр. Файл можно скачать или открыть в Яндекс Диске.'}</p></div>}
         </div>
         <footer>{previewItem.file && <a className="button button-solid" href={previewItem.file} target="_blank" rel="noreferrer">Скачать файл</a>}</footer>
       </section>
