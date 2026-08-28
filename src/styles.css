@@ -103,6 +103,23 @@ h1, h2, p { margin-top: 0; }
 .storage-preview-body img, .storage-preview-body video { display: block; max-width: 100%; max-height: calc(100vh - 190px); object-fit: contain; }
 .storage-preview-body iframe { width: 100%; height: min(76vh, 760px); border: 0; background: #fff; }
 .storage-preview footer { display: flex; justify-content: flex-end; padding: 10px 14px; border-top: 1px solid var(--line); }
+.wardrobe-shell { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: #f4f4f0; }
+.wardrobe-editor { display: grid; grid-template-columns: minmax(180px, .7fr) minmax(300px, 1.5fr) auto; align-items: end; gap: 10px; margin-bottom: 14px; padding: 13px; border: 1px solid var(--ink); border-radius: 9px; background: #fff; }
+.wardrobe-editor label { min-width: 0; display: grid; gap: 6px; color: var(--muted); font-size: .76rem; }
+.wardrobe-editor input { width: 100%; min-height: 42px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px; background: #fff; color: var(--ink); }
+.wardrobe-editor-actions { display: flex; gap: 7px; }
+.wardrobe-editor-actions .button { min-height: 42px; }
+.wardrobe-table { overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+.wardrobe-row { display: grid; grid-template-columns: minmax(140px, .8fr) minmax(260px, 1.7fr) minmax(170px, .9fr) minmax(150px, .9fr); align-items: center; border-bottom: 1px solid var(--line); }
+.wardrobe-table.can-manage .wardrobe-row { grid-template-columns: minmax(140px, .8fr) minmax(260px, 1.7fr) minmax(170px, .9fr) minmax(150px, .9fr) auto; }
+.wardrobe-row:last-child { border-bottom: 0; }
+.wardrobe-table-head { min-height: 42px; background: var(--ink); color: var(--paper); font-size: .72rem; text-transform: uppercase; letter-spacing: .04em; }
+.wardrobe-table-head span { padding: 10px 12px; }
+.wardrobe-cell { min-width: 0; padding: 13px 12px; overflow-wrap: anywhere; line-height: 1.4; }
+.wardrobe-cell time { color: var(--muted); font-size: .82rem; }
+.wardrobe-item-quantity { white-space: pre-wrap; }
+.wardrobe-row-actions { display: flex; gap: 5px; padding: 8px 10px 8px 4px; }
+.wardrobe-empty { min-height: 180px; display: grid; place-items: center; padding: 24px; color: var(--muted); text-align: center; }
 .hub-hero { height: 158px; min-height: 158px; align-items: stretch; padding: 0 0 0 24px; overflow: hidden; }
 .hub-hero > div { display: flex; flex: 1 1 42%; flex-direction: column; justify-content: center; min-width: 300px; padding-right: 22px; }
 .workhub-media { position: relative; width: min(58%, 700px); height: 158px; min-height: 158px; overflow: hidden; border-left: 1px solid #4c4c4c; background: var(--ink); }
@@ -493,6 +510,16 @@ h1, h2, p { margin-top: 0; }
   .section-management, .calendar-shell, .content-plan-shell { margin-left: 12px; margin-right: 12px; }
   .storage-shell { margin-right: 12px; margin-left: 12px; }
   .storage-grid { grid-template-columns: 1fr; }
+  .wardrobe-shell { margin-right: 12px; margin-left: 12px; padding: 12px; }
+  .wardrobe-editor { grid-template-columns: 1fr; }
+  .wardrobe-editor-actions .button { flex: 1; }
+  .wardrobe-table { overflow: visible; border: 0; border-radius: 0; background: transparent; }
+  .wardrobe-table-head { display: none; }
+  .wardrobe-row, .wardrobe-table.can-manage .wardrobe-row { grid-template-columns: 1fr; margin-bottom: 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: #fff; }
+  .wardrobe-row:last-child { border-bottom: 1px solid var(--line); }
+  .wardrobe-cell { display: grid; grid-template-columns: minmax(112px, .65fr) minmax(0, 1.35fr); gap: 10px; padding: 10px 12px; border-bottom: 1px solid #e3e3de; }
+  .wardrobe-cell::before { content: attr(data-label); color: var(--muted); font-size: .7rem; text-transform: uppercase; }
+  .wardrobe-row-actions { justify-content: flex-end; padding: 8px 10px; }
   .settings-section-management { margin-left: 0; margin-right: 0; }
   .module-grid { grid-template-columns: 1fr; }
   .section-management-row form { grid-template-columns: 1fr; }

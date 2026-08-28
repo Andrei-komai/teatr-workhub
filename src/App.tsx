@@ -4,6 +4,8 @@ import { CalendarScreen, ScheduleScreen } from './CalendarScreen'
 import type { CalendarAttachment, CalendarEvent, CalendarEventInput, ScheduleEntry, ScheduleEntryInput, ScheduleRegularAbsence } from './CalendarScreen'
 import { ContentPlanScreen } from './ContentPlanScreen'
 import type { ContentPlanAttachment, ContentPlanInput, ContentPlanItem } from './ContentPlanScreen'
+import { WardrobeScreen } from './WardrobeScreen'
+import type { WardrobeItem, WardrobeItemInput } from './WardrobeScreen'
 import { YandexStorageScreen } from './YandexStorageScreen'
 import { PERSONAL_SESSION_KEY, supabase } from './supabase'
 
@@ -12,7 +14,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
 
-type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings' | 'calendar' | 'schedule' | 'contentPlan' | 'custom'
+type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings' | 'calendar' | 'schedule' | 'contentPlan' | 'wardrobe' | 'custom'
 type Role = 'developer' | 'leader' | 'teacher' | 'admin' | 'participant'
 
 type Attachment = { id: string; name: string; size: number; type: string; path?: string; file?: File }
@@ -45,6 +47,7 @@ const COLLECTION_SECTION = 'collection'
 const CALENDAR_SECTION = 'calendar'
 const SCHEDULE_SECTION = 'schedule'
 const CONTENT_PLAN_SECTION = 'content-plan'
+const WARDROBE_SECTION = 'wardrobe'
 const DEVELOPER_ID = '00000000-0000-0000-0000-000000000001'
 const PUBLIC_APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
 const VAPID_PUBLIC_KEY = 'BENd3hUj0b-6-mRiIH81DsxOoA8ALkqT_c9RVU6CJHmmf3jblkTeRvFNEyri15fbAjBFhDrtSP8Ngis38_ddfPc'
@@ -53,6 +56,7 @@ const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
 const STANDARD_UPLOAD_LIMIT = 6 * 1024 * 1024
 const MAX_FILE_SIZE = 50 * 1024 * 1024
 const CONTENT_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
+const WARDROBE_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
 const ROLE_LABELS: Record<Role, string> = { developer: 'Разраб', leader: 'Руководитель', teacher: 'Педагог', admin: 'Админ', participant: 'Участник' }
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   developer: 'Техническое сопровождение и полный доступ ко всем настройкам.',
@@ -187,6 +191,12 @@ function mapContentPlanItem(row: Record<string, unknown>): ContentPlanItem {
     attachments: (row.attachments as ContentPlanAttachment[]) ?? [], authorId: row.author_id ? String(row.author_id) : null, createdAt: new Date(String(row.created_at)).getTime(),
   }
 }
+function mapWardrobeItem(row: Record<string, unknown>): WardrobeItem {
+  return {
+    id: String(row.id), performance: String(row.performance), itemQuantity: String(row.item_quantity),
+    updatedByName: String(row.updated_by_name ?? ''), updatedAt: new Date(String(row.updated_at)).getTime(),
+  }
+}
 function profileHasSectionAccess(targetProfile: Participant | null, sectionId: string, availableSections: WorkspaceSection[]) {
   if (!targetProfile) return false
   if (targetProfile.role === 'developer' || targetProfile.role === 'leader') return true
@@ -216,13 +226,14 @@ function AttachmentList({ files }: { files: Attachment[] }) {
   ))}</div>
 }
 
-function ModuleIcon({ name }: { name: 'collection' | 'calendar' | 'settings' | 'schedule' | 'contentPlan' | 'draft' | 'add' }) {
+function ModuleIcon({ name }: { name: 'collection' | 'calendar' | 'settings' | 'schedule' | 'contentPlan' | 'wardrobe' | 'draft' | 'add' }) {
   const paths = {
     collection: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 3v18M16 3v18M3 8h18M3 16h18" /></>,
     calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 10h18M7 14h2M11 14h2M15 14h2M7 18h2M11 18h2" /></>,
     settings: <><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1" /></>,
     schedule: <><circle cx="12" cy="13" r="8" /><path d="M12 9v5l3 2M8 3h8M9 21h6" /></>,
     contentPlan: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5M7 8h.01M7 12h.01M7 16h.01" /></>,
+    wardrobe: <><path d="M12 4a2.5 2.5 0 1 1-2.5 2.5" /><path d="m12 9-8 7h16zM4 16v3h16v-3" /></>,
     draft: <><path d="M3 6h7l2 2h9v11H3z" /><path d="M3 10h18" /></>,
     add: <path d="M12 4v16M4 12h16" />,
   }
@@ -290,6 +301,8 @@ function App() {
   const [scheduleRegularAbsences, setScheduleRegularAbsences] = useState<ScheduleRegularAbsence[]>([])
   const [scheduleParticipantNames, setScheduleParticipantNames] = useState<Record<string, string>>({})
   const [contentPlanItems, setContentPlanItems] = useState<ContentPlanItem[]>([])
+  const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
+  const [wardrobeLoading, setWardrobeLoading] = useState(false)
   const [screen, setScreen] = useState<Screen>('hub')
   const [returnScreen, setReturnScreen] = useState<Screen>('hub')
   const [query, setQuery] = useState('')
@@ -329,13 +342,15 @@ function App() {
   const canCreateSections = canManageMembers
   const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
   const contentPlanSection = sections.find((section) => section.id === CONTENT_PLAN_SECTION) ?? sections.find((section) => /контент[- ]план/i.test(section.title))
+  const wardrobeSection = sections.find((section) => section.id === WARDROBE_SECTION) ?? sections.find((section) => /костюмер/i.test(section.title))
   const canOpenCollection = profileHasSectionAccess(profile, COLLECTION_SECTION, sections)
   const canOpenCalendar = profileHasSectionAccess(profile, CALENDAR_SECTION, sections)
   const canOpenSchedule = Boolean(scheduleSection && profileHasSectionAccess(profile, scheduleSection.id, sections))
   const canOpenContentPlan = Boolean(contentPlanSection && profileHasSectionAccess(profile, contentPlanSection.id, sections))
+  const canOpenWardrobe = Boolean(wardrobeSection && profileHasSectionAccess(profile, wardrobeSection.id, sections))
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession, onReady?: () => void) {
-    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); return true }
+    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); setWardrobeItems([]); return true }
     const sectionRequest = supabase.from('sections').select('*').order('sort_order')
     let ownProfileResult
     try {
@@ -348,7 +363,7 @@ function App() {
     if (profileError) { setAppError(profileError.message); return false }
     setAppError('')
     const rawProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
-    if (!rawProfile) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); return true }
+    if (!rawProfile) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); setWardrobeItems([]); return true }
 
     setProfile(rawProfile)
     let sectionResult
@@ -445,6 +460,22 @@ function App() {
       }
     } else setMaterials([])
     return true
+  }
+
+  async function loadWardrobeItems(showLoading = true) {
+    if (showLoading) setWardrobeLoading(true)
+    try {
+      const { data, error } = await withTimeout(
+        supabase.from('wardrobe_items').select('*').order('performance').order('updated_at', { ascending: false }),
+        BACKGROUND_REQUEST_TIMEOUT,
+      )
+      if (error) throw error
+      setWardrobeItems((data ?? []).map(mapWardrobeItem))
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Не удалось загрузить костюмерную')
+    } finally {
+      if (showLoading) setWardrobeLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -551,6 +582,13 @@ function App() {
     return () => { window.clearInterval(refreshTimer); supabase.removeChannel(channel) }
   }, [session?.user.id, personalSession, profile?.role])
 
+  useEffect(() => {
+    if (screen !== 'wardrobe' || !profile) return
+    void loadWardrobeItems()
+    const timer = window.setInterval(() => loadWardrobeItems(false), 30000)
+    return () => window.clearInterval(timer)
+  }, [screen, profile?.id])
+
   const activeMaterials = useMemo(() => materials.filter((item) => !item.deletedAt), [materials])
   const trashMaterials = useMemo(() => materials.filter((item) => item.deletedAt), [materials])
   const categories = useMemo(() => Array.from(new Map(activeMaterials.filter((item) => item.category.trim()).map((item) => [normalize(item.category), item.category])).values()).sort((a, b) => a.localeCompare(b, 'ru')), [activeMaterials])
@@ -602,7 +640,7 @@ function App() {
     if (personalSession) await supabase.rpc('logout_personal_session')
     localStorage.removeItem(PERSONAL_SESSION_KEY); setPersonalSession(null)
     if (session) await supabase.auth.signOut()
-    setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); setScreen('hub')
+    setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); setWardrobeItems([]); setScreen('hub')
   }
   function requireAccess(target: Screen) {
     if (!profile) { setReturnScreen(target); setScreen('auth'); return }
@@ -610,6 +648,7 @@ function App() {
     if (target === 'calendar' && !canOpenCalendar) { setAppError('Для вашей роли нет доступа к календарю.'); return }
     if (target === 'schedule' && !canOpenSchedule) { setAppError('Для вашей роли нет доступа к расписанию.'); return }
     if (target === 'contentPlan' && !canOpenContentPlan) { setAppError('Для вашей роли нет доступа к контент-плану.'); return }
+    if (target === 'wardrobe' && !canOpenWardrobe) { setAppError('Для вашей роли нет доступа к костюмерной.'); return }
     if (target === 'settings' && !canInvite) { setAppError('Для вашей роли нет доступа к настройкам участников.'); return }
     setScreen(target)
   }
@@ -1044,6 +1083,26 @@ function App() {
     await loadData()
   }
 
+  async function saveWardrobeItem(input: WardrobeItemInput, initial: WardrobeItem | null) {
+    if (!profile || !WARDROBE_MANAGER_ROLES.includes(profile.role)) return false
+    const payload = { performance: input.performance, item_quantity: input.itemQuantity }
+    const { error } = initial
+      ? await supabase.from('wardrobe_items').update(payload).eq('id', initial.id)
+      : await supabase.from('wardrobe_items').insert(payload)
+    if (error) { setAppError(error.message); return false }
+    setAppNotice(initial ? 'Строка костюмерной обновлена' : 'Строка добавлена в костюмерную')
+    await loadWardrobeItems(false)
+    return true
+  }
+
+  async function deleteWardrobeItem(item: WardrobeItem) {
+    if (!WARDROBE_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить строку «${item.performance} — ${item.itemQuantity}»? Это действие нельзя отменить.`)) return
+    const { error } = await supabase.from('wardrobe_items').delete().eq('id', item.id)
+    if (error) { setAppError(error.message); return }
+    setAppNotice('Строка костюмерной удалена')
+    await loadWardrobeItems(false)
+  }
+
   const installButton = !isInstalled && <button className="text-button install-button" type="button" onClick={installApp}>⇩ Установить</button>
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
   const visibleAppError = /failed to fetch/i.test(appError) ? 'Нет связи с сервером. Проверьте интернет.' : appError
@@ -1061,7 +1120,7 @@ function App() {
       {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppNotice('')}>×</button></div>}
     </div>}
     <div className={`screen-stage screen-stage-${screen}`} key={screen}>
-      {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canOpenCalendar={canOpenCalendar} canOpenSchedule={canOpenSchedule} canOpenContentPlan={canOpenContentPlan} canInvite={canInvite} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onContentPlan={() => requireAccess('contentPlan')} onSettings={() => requireAccess('settings')} onSection={openCustomSection} onCreateSection={createSection} />}
+      {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canOpenCalendar={canOpenCalendar} canOpenSchedule={canOpenSchedule} canOpenContentPlan={canOpenContentPlan} canOpenWardrobe={canOpenWardrobe} canInvite={canInvite} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onContentPlan={() => requireAccess('contentPlan')} onWardrobe={() => requireAccess('wardrobe')} onSettings={() => requireAccess('settings')} onSection={openCustomSection} onCreateSection={createSection} />}
       {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
       {screen === 'collection' && <CollectionScreen title={sections.find((section) => section.id === COLLECTION_SECTION)?.title ?? 'Копилка материалов'} description={sections.find((section) => section.id === COLLECTION_SECTION)?.description ?? 'Общие материалы театра'} materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
       {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
@@ -1070,6 +1129,7 @@ function App() {
       {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
       {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} regularAbsences={scheduleRegularAbsences} participantNames={scheduleParticipantNames} currentProfileId={profile?.id ?? null} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} onSaveRegularAbsence={saveOwnRegularAbsence} />}
       {screen === 'contentPlan' && contentPlanSection && <ContentPlanScreen title={contentPlanSection.title} description={contentPlanSection.description || 'Публикации, съёмки и разработка контента'} entries={contentPlanItems} onBack={() => setScreen('hub')} onSave={saveContentPlanItem} onDelete={deleteContentPlanItem} />}
+      {screen === 'wardrobe' && wardrobeSection && <WardrobeScreen title={wardrobeSection.title} description={wardrobeSection.description || 'Костюмы, реквизит и всё необходимое для спектаклей'} items={wardrobeItems} loading={wardrobeLoading} canManage={WARDROBE_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveWardrobeItem} onDelete={deleteWardrobeItem} />}
       {screen === 'custom' && activeSection && <CustomSectionScreen section={activeSection} onBack={() => setScreen('hub')} />}
     </div>
   </div>
@@ -1084,13 +1144,14 @@ function NotificationSettings({ preferences, permission, saving, onChange, onSav
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="notification-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><p className="eyebrow">Личные настройки</p><h2 id="notification-title">Уведомления</h2><p className="notification-intro">Напоминания о календаре и классах приходят за 1 час по времени Екатеринбурга. Каждый пользователь настраивает их только для себя.</p>{preferences ? <><div className="notification-device"><div><b>{permission === 'granted' ? 'Уведомления разрешены' : permission === 'denied' ? 'Уведомления запрещены телефоном' : 'Уведомления на устройстве не включены'}</b><small>Подключённых устройств: {preferences.deviceCount}</small></div>{permission === 'granted' ? <button className="button" type="button" disabled={saving} onClick={onDisable}>Отключить на этом устройстве</button> : <button className="button button-solid" type="button" disabled={saving || permission === 'denied'} onClick={onEnable}>Включить на этом устройстве</button>}</div><div className="notification-options"><label><span><b>События, показы и репетиции</b><small>Всё, что добавлено в календарь репертуара</small></span><input type="checkbox" checked={preferences.eventsEnabled} onChange={(event) => onChange({ ...preferences, eventsEnabled: event.target.checked })} /></label><label><span><b>Классы</b><small>Записи из расписания классов и репетиций</small></span><input type="checkbox" checked={preferences.classesEnabled} onChange={(event) => onChange({ ...preferences, classesEnabled: event.target.checked })} /></label><label><span><b>Сообщения в беседах</b><small>Будет использоваться мессенджером</small></span><input type="checkbox" checked={preferences.messagesEnabled} onChange={(event) => onChange({ ...preferences, messagesEnabled: event.target.checked })} /></label></div><button className="button button-solid notification-save" type="button" disabled={saving} onClick={() => onSave(preferences)}>{saving ? 'Сохраняем…' : 'Сохранить настройки'}</button><p className="notification-help">На iPhone уведомления работают у воркхаба, установленного на экран «Домой». Разрешение запрашивается только после нажатия кнопки выше.</p></> : <p>Загружаем настройки…</p>}</section></div>
 }
 
-function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSchedule, canOpenContentPlan, canInvite, canCreateSections, onCollection, onCalendar, onSchedule, onContentPlan, onSettings, onSection, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canOpenCalendar: boolean; canOpenSchedule: boolean; canOpenContentPlan: boolean; canInvite: boolean; canCreateSections: boolean; onCollection: () => void; onCalendar: () => void; onSchedule: () => void; onContentPlan: () => void; onSettings: () => void; onSection: (section: WorkspaceSection) => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
+function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSchedule, canOpenContentPlan, canOpenWardrobe, canInvite, canCreateSections, onCollection, onCalendar, onSchedule, onContentPlan, onWardrobe, onSettings, onSection, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canOpenCalendar: boolean; canOpenSchedule: boolean; canOpenContentPlan: boolean; canOpenWardrobe: boolean; canInvite: boolean; canCreateSections: boolean; onCollection: () => void; onCalendar: () => void; onSchedule: () => void; onContentPlan: () => void; onWardrobe: () => void; onSettings: () => void; onSection: (section: WorkspaceSection) => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
   const [creatingSection, setCreatingSection] = useState(false)
   const collectionSection = sections.find((section) => section.id === COLLECTION_SECTION)
   const calendarSection = sections.find((section) => section.id === CALENDAR_SECTION)
   const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
   const contentPlanSection = sections.find((section) => section.id === CONTENT_PLAN_SECTION) ?? sections.find((section) => /контент[- ]план/i.test(section.title))
-  const customSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && section.id !== contentPlanSection?.id)
+  const wardrobeSection = sections.find((section) => section.id === WARDROBE_SECTION) ?? sections.find((section) => /костюмер/i.test(section.title))
+  const customSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && section.id !== contentPlanSection?.id && section.id !== wardrobeSection?.id)
   const accessLabel = (allowed: boolean) => !profile ? 'Личный вход' : !allowed ? 'Нет доступа' : profile.role === 'participant' ? 'Только просмотр' : 'Есть доступ'
   const unavailableClass = (allowed: boolean) => `module-card${profile && !allowed ? ' unavailable' : ''}`
   return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><WorkhubMedia /></section><section className="module-grid" aria-label="Разделы театра">
@@ -1099,6 +1160,7 @@ function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSch
     <button className={unavailableClass(canInvite)} type="button" disabled={Boolean(profile) && !canInvite} onClick={onSettings}><ModuleIcon name="settings" /><span className="module-copy"><b>Участники и настройки</b><small>Роли, доступы, личные пароли и общий пароль</small></span><span className="access-chip">{accessLabel(canInvite)}</span><span>→</span></button>
     {scheduleSection && <button className={unavailableClass(canOpenSchedule)} type="button" disabled={Boolean(profile) && !canOpenSchedule} onClick={onSchedule}><ModuleIcon name="schedule" /><span className="module-copy"><b>{scheduleSection.title}</b><small>{scheduleSection.description || 'Дата, время, педагог, класс и отсутствие'}</small></span><span className="access-chip">{accessLabel(canOpenSchedule)}</span><span>→</span></button>}
     {contentPlanSection && <button className={unavailableClass(canOpenContentPlan)} type="button" disabled={Boolean(profile) && !canOpenContentPlan} onClick={onContentPlan}><ModuleIcon name="contentPlan" /><span className="module-copy"><b>{contentPlanSection.title}</b><small>{contentPlanSection.description || 'Публикации, съёмки и разработка контента'}</small></span><span className="access-chip">{accessLabel(canOpenContentPlan)}</span><span>→</span></button>}
+    {wardrobeSection && <button className={unavailableClass(canOpenWardrobe)} type="button" disabled={Boolean(profile) && !canOpenWardrobe} onClick={onWardrobe}><ModuleIcon name="wardrobe" /><span className="module-copy"><b>{wardrobeSection.title}</b><small>{wardrobeSection.description || 'Костюмы, реквизит и всё необходимое для спектаклей'}</small></span><span className="access-chip">{!profile ? 'Личный вход' : !canOpenWardrobe ? 'Нет доступа' : WARDROBE_MANAGER_ROLES.includes(profile.role) ? 'Редактирование' : 'Только просмотр'}</span><span>→</span></button>}
     {customSections.map((section) => { const allowed = profileHasSectionAccess(profile, section.id, sections); return <button className={unavailableClass(allowed)} type="button" disabled={Boolean(profile) && !allowed} key={section.id} onClick={() => onSection(section)}><ModuleIcon name="draft" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел театра'}</small></span><span className="access-chip">{accessLabel(allowed)}</span><span>→</span></button> })}
     {canCreateSections && !creatingSection && <button className="module-card" type="button" onClick={() => setCreatingSection(true)}><ModuleIcon name="add" /><span className="module-copy"><b>Новый раздел</b><small>Добавить название будущего раздела</small></span><span className="access-chip">Добавить</span><span>→</span></button>}
     {canCreateSections && creatingSection && <form className="module-card section-create-form" onSubmit={async (event) => { if (await onCreateSection(event)) setCreatingSection(false) }}><ModuleIcon name="add" /><div className="section-create-fields"><b>Новый раздел</b><input name="sectionTitle" placeholder="Название раздела" minLength={2} maxLength={80} autoFocus required /><input name="sectionDescription" placeholder="Краткое описание (необязательно)" maxLength={140} /></div><div className="section-create-actions"><button className="button" type="button" onClick={() => setCreatingSection(false)}>Отмена</button><button className="button button-solid" type="submit">Создать</button></div></form>}
