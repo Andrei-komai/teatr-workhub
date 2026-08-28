@@ -4,6 +4,7 @@ import { CalendarScreen, ScheduleScreen } from './CalendarScreen'
 import type { CalendarAttachment, CalendarEvent, CalendarEventInput, ScheduleEntry, ScheduleEntryInput, ScheduleRegularAbsence } from './CalendarScreen'
 import { ContentPlanScreen } from './ContentPlanScreen'
 import type { ContentPlanAttachment, ContentPlanInput, ContentPlanItem } from './ContentPlanScreen'
+import { YandexStorageScreen } from './YandexStorageScreen'
 import { PERSONAL_SESSION_KEY, supabase } from './supabase'
 
 interface BeforeInstallPromptEvent extends Event {
@@ -1105,6 +1106,7 @@ function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSch
 }
 
 function CustomSectionScreen({ section, onBack }: { section: WorkspaceSection; onBack: () => void }) {
+  if (/хранилищ/i.test(section.title)) return <YandexStorageScreen title={section.title} description={section.description} onBack={onBack} />
   return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>{section.title}</h1><p>{section.description}</p></div></section></main>
 }
 
