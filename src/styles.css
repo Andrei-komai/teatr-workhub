@@ -432,6 +432,24 @@ h1, h2, p { margin-top: 0; }
 .developer-card { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 .developer-card .access-chip { display: flex; margin-bottom: 8px; }
 .developer-card p { margin: 8px 0 0; color: #c9c9c3; }
+.policy-shell { width: min(1040px, calc(100% - 32px)); margin: 16px auto 0; }
+.policy-version { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 10px; padding: 10px 12px; border: 1px solid var(--ink); border-radius: 9px; background: #fff; font-size: .82rem; text-transform: uppercase; }
+.policy-pages { display: grid; gap: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #d8d8d3; }
+.policy-pages img { display: block; width: 100%; height: auto; background: #fff; box-shadow: 0 3px 14px rgba(0, 0, 0, .12); }
+.policy-signature { position: relative; display: grid; gap: 10px; margin: 16px 0 24px; padding: 22px; overflow: hidden; border: 1px solid var(--ink); border-radius: 10px; background: #fff; }
+.policy-signature h2, .policy-signature p { margin: 0; }
+.policy-signature > p:not(.eyebrow) { max-width: 720px; color: var(--muted); line-height: 1.45; }
+.policy-signature .button { width: fit-content; margin-top: 4px; }
+.policy-signature.signed { padding-right: 100px; background: var(--ink); color: var(--paper); }
+.policy-signature.signed > p:not(.eyebrow) { color: #c9c9c3; }
+.policy-signed-mark { position: absolute; top: 50%; right: 25px; display: grid; place-items: center; width: 56px; height: 56px; border: 2px solid var(--paper); border-radius: 50%; font-size: 1.8rem; transform: translateY(-50%); }
+.policy-signatures-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.policy-signatures-heading h2, .policy-signatures-heading p { margin: 0; }
+.policy-signatures-heading > span { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--ink); border-radius: 50%; }
+.policy-signatures-list { border-top: 1px solid var(--line); }
+.policy-signatures-list article { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line); }
+.policy-signatures-list article > div { display: grid; gap: 3px; }
+.policy-signatures-list small, .policy-signatures-list time { color: var(--muted); font-size: .8rem; }
 .auth-form { width: min(520px, calc(100% - 24px)); display: grid; gap: 12px; margin: 28px auto; padding: 20px; border: 1px solid var(--ink); border-radius: 10px; background: #fff; }
 .auth-form label { display: grid; gap: 7px; font-weight: 650; }
 .auth-form input { width: 100%; min-height: 44px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; }
@@ -508,6 +526,7 @@ h1, h2, p { margin-top: 0; }
   .workhub-media { width: 48%; height: 142px; min-height: 142px; }
   .module-grid, .collection-tools, .filters, .materials, .material-form, .trash-list, .settings-grid { margin-left: 12px; margin-right: 12px; }
   .section-management, .calendar-shell, .content-plan-shell { margin-left: 12px; margin-right: 12px; }
+  .policy-shell { width: auto; margin-right: 12px; margin-left: 12px; }
   .storage-shell { margin-right: 12px; margin-left: 12px; }
   .storage-grid { grid-template-columns: 1fr; }
   .wardrobe-shell { margin-right: 12px; margin-left: 12px; padding: 12px; }
@@ -631,6 +650,12 @@ h1, h2, p { margin-top: 0; }
   .participant-row > .participant-section-access { grid-column: 2 / -1; }
   .settings-tabs button { font-size: 1rem; }
   .settings-tabs { padding-bottom: 2px; }
+  .policy-header .inverse-button { grid-column: 1 / -1; width: 100%; }
+  .policy-pages { gap: 8px; padding: 8px; }
+  .policy-signature { padding: 18px 14px; }
+  .policy-signature.signed { padding-right: 72px; }
+  .policy-signed-mark { right: 14px; width: 42px; height: 42px; font-size: 1.35rem; }
+  .policy-signatures-list article { grid-template-columns: 1fr; gap: 5px; }
   .participant-password { grid-column: 1 / -1; grid-template-columns: 1fr; }
   .participant-actions { grid-column: 3; grid-row: 1; }
   .invite-form { grid-template-columns: 1fr; }

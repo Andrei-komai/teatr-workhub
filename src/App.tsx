@@ -6,6 +6,8 @@ import { ContentPlanScreen } from './ContentPlanScreen'
 import type { ContentPlanAttachment, ContentPlanInput, ContentPlanItem } from './ContentPlanScreen'
 import { WardrobeScreen } from './WardrobeScreen'
 import type { WardrobeItem, WardrobeItemInput } from './WardrobeScreen'
+import { ParticipationPolicyScreen, PolicySignaturesList } from './ParticipationPolicyScreen'
+import type { ParticipationPolicySignature } from './ParticipationPolicyScreen'
 import { YandexStorageScreen } from './YandexStorageScreen'
 import { PERSONAL_SESSION_KEY, supabase } from './supabase'
 
@@ -14,7 +16,7 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>
 }
 
-type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings' | 'calendar' | 'schedule' | 'contentPlan' | 'wardrobe' | 'custom'
+type Screen = 'hub' | 'auth' | 'collection' | 'form' | 'trash' | 'settings' | 'calendar' | 'schedule' | 'contentPlan' | 'wardrobe' | 'policy' | 'custom'
 type Role = 'developer' | 'leader' | 'teacher' | 'admin' | 'participant'
 
 type Attachment = { id: string; name: string; size: number; type: string; path?: string; file?: File }
@@ -48,6 +50,8 @@ const CALENDAR_SECTION = 'calendar'
 const SCHEDULE_SECTION = 'schedule'
 const CONTENT_PLAN_SECTION = 'content-plan'
 const WARDROBE_SECTION = 'wardrobe'
+const POLICY_SECTION = 'participation-policy'
+const POLICY_VERSION = '1.1'
 const DEVELOPER_ID = '00000000-0000-0000-0000-000000000001'
 const PUBLIC_APP_URL = 'https://andrei-komai.github.io/teatr-workhub/'
 const VAPID_PUBLIC_KEY = 'BENd3hUj0b-6-mRiIH81DsxOoA8ALkqT_c9RVU6CJHmmf3jblkTeRvFNEyri15fbAjBFhDrtSP8Ngis38_ddfPc'
@@ -226,7 +230,7 @@ function AttachmentList({ files }: { files: Attachment[] }) {
   ))}</div>
 }
 
-function ModuleIcon({ name }: { name: 'collection' | 'calendar' | 'settings' | 'schedule' | 'contentPlan' | 'wardrobe' | 'draft' | 'add' }) {
+function ModuleIcon({ name }: { name: 'collection' | 'calendar' | 'settings' | 'schedule' | 'contentPlan' | 'wardrobe' | 'policy' | 'draft' | 'add' }) {
   const paths = {
     collection: <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M8 3v18M16 3v18M3 8h18M3 16h18" /></>,
     calendar: <><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M7 3v4M17 3v4M3 10h18M7 14h2M11 14h2M15 14h2M7 18h2M11 18h2" /></>,
@@ -234,6 +238,7 @@ function ModuleIcon({ name }: { name: 'collection' | 'calendar' | 'settings' | '
     schedule: <><circle cx="12" cy="13" r="8" /><path d="M12 9v5l3 2M8 3h8M9 21h6" /></>,
     contentPlan: <><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M8 8h8M8 12h8M8 16h5M7 8h.01M7 12h.01M7 16h.01" /></>,
     wardrobe: <><path d="M12 4a2.5 2.5 0 1 1-2.5 2.5" /><path d="m12 9-8 7h16zM4 16v3h16v-3" /></>,
+    policy: <><path d="M6 3h9l3 3v15H6z" /><path d="M15 3v4h4M9 11h6M9 15h6M9 18h4" /></>,
     draft: <><path d="M3 6h7l2 2h9v11H3z" /><path d="M3 10h18" /></>,
     add: <path d="M12 4v16M4 12h16" />,
   }
@@ -303,6 +308,9 @@ function App() {
   const [contentPlanItems, setContentPlanItems] = useState<ContentPlanItem[]>([])
   const [wardrobeItems, setWardrobeItems] = useState<WardrobeItem[]>([])
   const [wardrobeLoading, setWardrobeLoading] = useState(false)
+  const [policySignatures, setPolicySignatures] = useState<ParticipationPolicySignature[]>([])
+  const [policySignaturesLoading, setPolicySignaturesLoading] = useState(false)
+  const [policySigning, setPolicySigning] = useState(false)
   const [screen, setScreen] = useState<Screen>('hub')
   const [returnScreen, setReturnScreen] = useState<Screen>('hub')
   const [query, setQuery] = useState('')
@@ -343,11 +351,13 @@ function App() {
   const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
   const contentPlanSection = sections.find((section) => section.id === CONTENT_PLAN_SECTION) ?? sections.find((section) => /контент[- ]план/i.test(section.title))
   const wardrobeSection = sections.find((section) => section.id === WARDROBE_SECTION) ?? sections.find((section) => /костюмер/i.test(section.title))
+  const policySection = sections.find((section) => section.id === POLICY_SECTION) ?? sections.find((section) => /положен.*участи|пользовательск.*соглаш/i.test(section.title))
   const canOpenCollection = profileHasSectionAccess(profile, COLLECTION_SECTION, sections)
   const canOpenCalendar = profileHasSectionAccess(profile, CALENDAR_SECTION, sections)
   const canOpenSchedule = Boolean(scheduleSection && profileHasSectionAccess(profile, scheduleSection.id, sections))
   const canOpenContentPlan = Boolean(contentPlanSection && profileHasSectionAccess(profile, contentPlanSection.id, sections))
   const canOpenWardrobe = Boolean(wardrobeSection && profileHasSectionAccess(profile, wardrobeSection.id, sections))
+  const canOpenPolicy = Boolean(policySection && profileHasSectionAccess(profile, policySection.id, sections))
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession, onReady?: () => void) {
     if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); setWardrobeItems([]); return true }
@@ -478,6 +488,27 @@ function App() {
     }
   }
 
+  async function loadPolicySignatures(showLoading = true) {
+    if (showLoading) setPolicySignaturesLoading(true)
+    try {
+      const { data, error } = await withTimeout(
+        supabase.from('participation_policy_signatures').select('profile_id, signer_name, policy_version, signed_at').order('signed_at', { ascending: false }),
+        BACKGROUND_REQUEST_TIMEOUT,
+      )
+      if (error) throw error
+      setPolicySignatures((data ?? []).map((row) => ({
+        profileId: row.profile_id,
+        signerName: row.signer_name,
+        policyVersion: row.policy_version,
+        signedAt: row.signed_at,
+      })))
+    } catch (error) {
+      setAppError(error instanceof Error ? error.message : 'Не удалось загрузить подписи положения')
+    } finally {
+      if (showLoading) setPolicySignaturesLoading(false)
+    }
+  }
+
   useEffect(() => {
     localStorage.removeItem(LEGACY_SESSION_KEY)
     sessionStorage.removeItem(LEGACY_SESSION_KEY)
@@ -589,6 +620,11 @@ function App() {
     return () => window.clearInterval(timer)
   }, [screen, profile?.id])
 
+  useEffect(() => {
+    if ((screen !== 'policy' && screen !== 'settings') || !profile) return
+    void loadPolicySignatures()
+  }, [screen, profile?.id])
+
   const activeMaterials = useMemo(() => materials.filter((item) => !item.deletedAt), [materials])
   const trashMaterials = useMemo(() => materials.filter((item) => item.deletedAt), [materials])
   const categories = useMemo(() => Array.from(new Map(activeMaterials.filter((item) => item.category.trim()).map((item) => [normalize(item.category), item.category])).values()).sort((a, b) => a.localeCompare(b, 'ru')), [activeMaterials])
@@ -640,7 +676,7 @@ function App() {
     if (personalSession) await supabase.rpc('logout_personal_session')
     localStorage.removeItem(PERSONAL_SESSION_KEY); setPersonalSession(null)
     if (session) await supabase.auth.signOut()
-    setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); setWardrobeItems([]); setScreen('hub')
+    setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); setWardrobeItems([]); setPolicySignatures([]); setScreen('hub')
   }
   function requireAccess(target: Screen) {
     if (!profile) { setReturnScreen(target); setScreen('auth'); return }
@@ -649,6 +685,7 @@ function App() {
     if (target === 'schedule' && !canOpenSchedule) { setAppError('Для вашей роли нет доступа к расписанию.'); return }
     if (target === 'contentPlan' && !canOpenContentPlan) { setAppError('Для вашей роли нет доступа к контент-плану.'); return }
     if (target === 'wardrobe' && !canOpenWardrobe) { setAppError('Для вашей роли нет доступа к костюмерной.'); return }
+    if (target === 'policy' && !canOpenPolicy) { setAppError('Для вашего профиля нет доступа к положению об участии.'); return }
     if (target === 'settings' && !canInvite) { setAppError('Для вашей роли нет доступа к настройкам участников.'); return }
     setScreen(target)
   }
@@ -1103,6 +1140,23 @@ function App() {
     await loadWardrobeItems(false)
   }
 
+  async function signParticipationPolicy() {
+    if (!profile || !canOpenPolicy || policySignatures.some((item) => item.profileId === profile.id && item.policyVersion === POLICY_VERSION)) return
+    if (!window.confirm('Подтверждаете, что прочитали положение версии 1.1 полностью и согласны с каждым его пунктом? Подпись будет зафиксирована с вашим ФИО и текущей датой.')) return
+    setPolicySigning(true)
+    const { error } = await supabase.from('participation_policy_signatures').insert({
+      profile_id: profile.id,
+      signer_name: profile.name,
+      policy_version: POLICY_VERSION,
+    })
+    if (error && error.code !== '23505') setAppError(error.message)
+    else {
+      setAppNotice(error?.code === '23505' ? 'Положение уже было подписано' : 'Положение подписано')
+      await loadPolicySignatures(false)
+    }
+    setPolicySigning(false)
+  }
+
   const installButton = !isInstalled && <button className="text-button install-button" type="button" onClick={installApp}>⇩ Установить</button>
   const installHelp = showInstallHelp && <InstallHelp onClose={() => setShowInstallHelp(false)} />
   const visibleAppError = /failed to fetch/i.test(appError) ? 'Нет связи с сервером. Проверьте интернет.' : appError
@@ -1120,16 +1174,17 @@ function App() {
       {appNotice && <div className="app-alert success" role="status"><span>{appNotice}</span><button type="button" aria-label="Закрыть уведомление" onClick={() => setAppNotice('')}>×</button></div>}
     </div>}
     <div className={`screen-stage screen-stage-${screen}`} key={screen}>
-      {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canOpenCalendar={canOpenCalendar} canOpenSchedule={canOpenSchedule} canOpenContentPlan={canOpenContentPlan} canOpenWardrobe={canOpenWardrobe} canInvite={canInvite} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onContentPlan={() => requireAccess('contentPlan')} onWardrobe={() => requireAccess('wardrobe')} onSettings={() => requireAccess('settings')} onSection={openCustomSection} onCreateSection={createSection} />}
+      {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canOpenCalendar={canOpenCalendar} canOpenSchedule={canOpenSchedule} canOpenContentPlan={canOpenContentPlan} canOpenWardrobe={canOpenWardrobe} canOpenPolicy={canOpenPolicy} canInvite={canInvite} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onContentPlan={() => requireAccess('contentPlan')} onWardrobe={() => requireAccess('wardrobe')} onPolicy={() => requireAccess('policy')} onSettings={() => requireAccess('settings')} onSection={openCustomSection} onCreateSection={createSection} />}
       {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
       {screen === 'collection' && <CollectionScreen title={sections.find((section) => section.id === COLLECTION_SECTION)?.title ?? 'Копилка материалов'} description={sections.find((section) => section.id === COLLECTION_SECTION)?.description ?? 'Общие материалы театра'} materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
       {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
       {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
-      {screen === 'settings' && <SettingsScreen participants={participants} sections={sections} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} onUpdateSection={updateSection} onDeleteSection={deleteSection} />}
+      {screen === 'settings' && <SettingsScreen participants={participants} sections={sections} signatures={policySignatures} signaturesLoading={policySignaturesLoading} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} onUpdateSection={updateSection} onDeleteSection={deleteSection} />}
       {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
       {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} regularAbsences={scheduleRegularAbsences} participantNames={scheduleParticipantNames} currentProfileId={profile?.id ?? null} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} onSaveRegularAbsence={saveOwnRegularAbsence} />}
       {screen === 'contentPlan' && contentPlanSection && <ContentPlanScreen title={contentPlanSection.title} description={contentPlanSection.description || 'Публикации, съёмки и разработка контента'} entries={contentPlanItems} onBack={() => setScreen('hub')} onSave={saveContentPlanItem} onDelete={deleteContentPlanItem} />}
       {screen === 'wardrobe' && wardrobeSection && <WardrobeScreen title={wardrobeSection.title} description={wardrobeSection.description || 'Костюмы, реквизит и всё необходимое для спектаклей'} items={wardrobeItems} loading={wardrobeLoading} canManage={WARDROBE_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveWardrobeItem} onDelete={deleteWardrobeItem} />}
+      {screen === 'policy' && policySection && <ParticipationPolicyScreen title={policySection.title} description={policySection.description || 'Правила участия и обязанности в театре Т.А.М.'} signature={policySignatures.find((item) => item.profileId === profile?.id && item.policyVersion === POLICY_VERSION) ?? null} signing={policySigning} onBack={() => setScreen('hub')} onSign={signParticipationPolicy} />}
       {screen === 'custom' && activeSection && <CustomSectionScreen section={activeSection} onBack={() => setScreen('hub')} />}
     </div>
   </div>
@@ -1144,14 +1199,15 @@ function NotificationSettings({ preferences, permission, saving, onChange, onSav
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}><section className="notification-modal" role="dialog" aria-modal="true" aria-labelledby="notification-title" onMouseDown={(event) => event.stopPropagation()}><button className="modal-close" type="button" aria-label="Закрыть" onClick={onClose}>×</button><p className="eyebrow">Личные настройки</p><h2 id="notification-title">Уведомления</h2><p className="notification-intro">Напоминания о календаре и классах приходят за 1 час по времени Екатеринбурга. Каждый пользователь настраивает их только для себя.</p>{preferences ? <><div className="notification-device"><div><b>{permission === 'granted' ? 'Уведомления разрешены' : permission === 'denied' ? 'Уведомления запрещены телефоном' : 'Уведомления на устройстве не включены'}</b><small>Подключённых устройств: {preferences.deviceCount}</small></div>{permission === 'granted' ? <button className="button" type="button" disabled={saving} onClick={onDisable}>Отключить на этом устройстве</button> : <button className="button button-solid" type="button" disabled={saving || permission === 'denied'} onClick={onEnable}>Включить на этом устройстве</button>}</div><div className="notification-options"><label><span><b>События, показы и репетиции</b><small>Всё, что добавлено в календарь репертуара</small></span><input type="checkbox" checked={preferences.eventsEnabled} onChange={(event) => onChange({ ...preferences, eventsEnabled: event.target.checked })} /></label><label><span><b>Классы</b><small>Записи из расписания классов и репетиций</small></span><input type="checkbox" checked={preferences.classesEnabled} onChange={(event) => onChange({ ...preferences, classesEnabled: event.target.checked })} /></label><label><span><b>Сообщения в беседах</b><small>Будет использоваться мессенджером</small></span><input type="checkbox" checked={preferences.messagesEnabled} onChange={(event) => onChange({ ...preferences, messagesEnabled: event.target.checked })} /></label></div><button className="button button-solid notification-save" type="button" disabled={saving} onClick={() => onSave(preferences)}>{saving ? 'Сохраняем…' : 'Сохранить настройки'}</button><p className="notification-help">На iPhone уведомления работают у воркхаба, установленного на экран «Домой». Разрешение запрашивается только после нажатия кнопки выше.</p></> : <p>Загружаем настройки…</p>}</section></div>
 }
 
-function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSchedule, canOpenContentPlan, canOpenWardrobe, canInvite, canCreateSections, onCollection, onCalendar, onSchedule, onContentPlan, onWardrobe, onSettings, onSection, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canOpenCalendar: boolean; canOpenSchedule: boolean; canOpenContentPlan: boolean; canOpenWardrobe: boolean; canInvite: boolean; canCreateSections: boolean; onCollection: () => void; onCalendar: () => void; onSchedule: () => void; onContentPlan: () => void; onWardrobe: () => void; onSettings: () => void; onSection: (section: WorkspaceSection) => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
+function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSchedule, canOpenContentPlan, canOpenWardrobe, canOpenPolicy, canInvite, canCreateSections, onCollection, onCalendar, onSchedule, onContentPlan, onWardrobe, onPolicy, onSettings, onSection, onCreateSection }: { profile: Participant | null; sections: WorkspaceSection[]; canOpenCollection: boolean; canOpenCalendar: boolean; canOpenSchedule: boolean; canOpenContentPlan: boolean; canOpenWardrobe: boolean; canOpenPolicy: boolean; canInvite: boolean; canCreateSections: boolean; onCollection: () => void; onCalendar: () => void; onSchedule: () => void; onContentPlan: () => void; onWardrobe: () => void; onPolicy: () => void; onSettings: () => void; onSection: (section: WorkspaceSection) => void; onCreateSection: (event: FormEvent<HTMLFormElement>) => Promise<boolean> }) {
   const [creatingSection, setCreatingSection] = useState(false)
   const collectionSection = sections.find((section) => section.id === COLLECTION_SECTION)
   const calendarSection = sections.find((section) => section.id === CALENDAR_SECTION)
   const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
   const contentPlanSection = sections.find((section) => section.id === CONTENT_PLAN_SECTION) ?? sections.find((section) => /контент[- ]план/i.test(section.title))
   const wardrobeSection = sections.find((section) => section.id === WARDROBE_SECTION) ?? sections.find((section) => /костюмер/i.test(section.title))
-  const customSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && section.id !== contentPlanSection?.id && section.id !== wardrobeSection?.id)
+  const policySection = sections.find((section) => section.id === POLICY_SECTION) ?? sections.find((section) => /положен.*участи|пользовательск.*соглаш/i.test(section.title))
+  const customSections = sections.filter((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && section.id !== scheduleSection?.id && section.id !== contentPlanSection?.id && section.id !== wardrobeSection?.id && section.id !== policySection?.id)
   const accessLabel = (allowed: boolean) => !profile ? 'Личный вход' : !allowed ? 'Нет доступа' : profile.role === 'participant' ? 'Только просмотр' : 'Есть доступ'
   const unavailableClass = (allowed: boolean) => `module-card${profile && !allowed ? ' unavailable' : ''}`
   return <main><section className="work-header hub-hero"><div><p className="eyebrow inverse">Рабочая зона</p><h1>Разделы театра</h1></div><WorkhubMedia /></section><section className="module-grid" aria-label="Разделы театра">
@@ -1161,6 +1217,7 @@ function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSch
     {scheduleSection && <button className={unavailableClass(canOpenSchedule)} type="button" disabled={Boolean(profile) && !canOpenSchedule} onClick={onSchedule}><ModuleIcon name="schedule" /><span className="module-copy"><b>{scheduleSection.title}</b><small>{scheduleSection.description || 'Дата, время, педагог, класс и отсутствие'}</small></span><span className="access-chip">{accessLabel(canOpenSchedule)}</span><span>→</span></button>}
     {contentPlanSection && <button className={unavailableClass(canOpenContentPlan)} type="button" disabled={Boolean(profile) && !canOpenContentPlan} onClick={onContentPlan}><ModuleIcon name="contentPlan" /><span className="module-copy"><b>{contentPlanSection.title}</b><small>{contentPlanSection.description || 'Публикации, съёмки и разработка контента'}</small></span><span className="access-chip">{accessLabel(canOpenContentPlan)}</span><span>→</span></button>}
     {wardrobeSection && <button className={unavailableClass(canOpenWardrobe)} type="button" disabled={Boolean(profile) && !canOpenWardrobe} onClick={onWardrobe}><ModuleIcon name="wardrobe" /><span className="module-copy"><b>{wardrobeSection.title}</b><small>{wardrobeSection.description || 'Костюмы, реквизит и всё необходимое для спектаклей'}</small></span><span className="access-chip">{!profile ? 'Личный вход' : !canOpenWardrobe ? 'Нет доступа' : WARDROBE_MANAGER_ROLES.includes(profile.role) ? 'Редактирование' : 'Только просмотр'}</span><span>→</span></button>}
+    {policySection && <button className={unavailableClass(canOpenPolicy)} type="button" disabled={Boolean(profile) && !canOpenPolicy} onClick={onPolicy}><ModuleIcon name="policy" /><span className="module-copy"><b>{policySection.title}</b><small>{policySection.description || 'Правила участия и обязанности в театре Т.А.М.'}</small></span><span className="access-chip">{!profile ? 'Личный вход' : !canOpenPolicy ? 'Нет доступа' : 'Прочитать и подписать'}</span><span>→</span></button>}
     {customSections.map((section) => { const allowed = profileHasSectionAccess(profile, section.id, sections); return <button className={unavailableClass(allowed)} type="button" disabled={Boolean(profile) && !allowed} key={section.id} onClick={() => onSection(section)}><ModuleIcon name="draft" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел театра'}</small></span><span className="access-chip">{accessLabel(allowed)}</span><span>→</span></button> })}
     {canCreateSections && !creatingSection && <button className="module-card" type="button" onClick={() => setCreatingSection(true)}><ModuleIcon name="add" /><span className="module-copy"><b>Новый раздел</b><small>Добавить название будущего раздела</small></span><span className="access-chip">Добавить</span><span>→</span></button>}
     {canCreateSections && creatingSection && <form className="module-card section-create-form" onSubmit={async (event) => { if (await onCreateSection(event)) setCreatingSection(false) }}><ModuleIcon name="add" /><div className="section-create-fields"><b>Новый раздел</b><input name="sectionTitle" placeholder="Название раздела" minLength={2} maxLength={80} autoFocus required /><input name="sectionDescription" placeholder="Краткое описание (необязательно)" maxLength={140} /></div><div className="section-create-actions"><button className="button" type="button" onClick={() => setCreatingSection(false)}>Отмена</button><button className="button button-solid" type="submit">Создать</button></div></form>}
@@ -1225,12 +1282,13 @@ function TrashScreen({ materials, onBack, onRestore, onRemove }: { materials: Ma
   return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Корзина</h1><p>Материалы удаляются навсегда через 30 дней</p></div></section><section className="trash-list">{materials.map((item) => { const daysLeft = Math.max(1, 30 - Math.floor((Date.now() - (item.deletedAt ?? Date.now())) / DAY)); return <article className="trash-row" key={item.id}><div><b>{materialTitle(item)}</b><small>{item.category || 'Без категории'} · осталось {daysLeft} дн.</small></div><div><button className="button" onClick={() => onRestore(item.id)}>Восстановить</button><button className="button danger" onClick={() => onRemove(item.id)}>Удалить навсегда</button></div></article> })}{!materials.length && <div className="empty-state">Корзина пуста</div>}</section></main>
 }
 
-function SettingsScreen({ participants, sections, canInvite, canManageMembers, onBack, onShare, onInvite, onUpdate, onRemove, onParticipantPassword, onPassword, onUpdateSection, onDeleteSection }: { participants: Participant[]; sections: WorkspaceSection[]; canInvite: boolean; canManageMembers: boolean; onBack: () => void; onShare: (email?: string) => void; onInvite: (event: FormEvent<HTMLFormElement>) => void; onUpdate: (id: string, changes: Partial<Participant>) => void; onRemove: (id: string) => void; onParticipantPassword: (id: string, event: FormEvent<HTMLFormElement>) => void; onPassword: (event: FormEvent<HTMLFormElement>) => void; onUpdateSection: (id: string, event: FormEvent<HTMLFormElement>) => Promise<boolean>; onDeleteSection: (section: WorkspaceSection) => void }) {
-  const [activeTab, setActiveTab] = useState<'participants' | 'sections'>('participants')
-  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Участники и настройки</h1><p>Роли, доступы и личные пароли</p></div>{canInvite && <button className="button inverse-button" type="button" onClick={() => onShare()}>Поделиться приложением</button>}</section><section className="settings-grid"><div className="settings-main"><div className="settings-heading settings-tabs-heading"><div><p className="eyebrow">Настройки интерфейса</p><div className="settings-tabs" role="tablist" aria-label="Настройки интерфейса"><button type="button" role="tab" aria-selected={activeTab === 'participants'} className={activeTab === 'participants' ? 'active' : ''} onClick={() => setActiveTab('participants')}>Участники</button>{canManageMembers && <button type="button" role="tab" aria-selected={activeTab === 'sections'} className={activeTab === 'sections' ? 'active' : ''} onClick={() => setActiveTab('sections')}>Управление разделами</button>}</div></div>{activeTab === 'participants' && <span>{participants.length}</span>}</div>
+function SettingsScreen({ participants, sections, signatures, signaturesLoading, canInvite, canManageMembers, onBack, onShare, onInvite, onUpdate, onRemove, onParticipantPassword, onPassword, onUpdateSection, onDeleteSection }: { participants: Participant[]; sections: WorkspaceSection[]; signatures: ParticipationPolicySignature[]; signaturesLoading: boolean; canInvite: boolean; canManageMembers: boolean; onBack: () => void; onShare: (email?: string) => void; onInvite: (event: FormEvent<HTMLFormElement>) => void; onUpdate: (id: string, changes: Partial<Participant>) => void; onRemove: (id: string) => void; onParticipantPassword: (id: string, event: FormEvent<HTMLFormElement>) => void; onPassword: (event: FormEvent<HTMLFormElement>) => void; onUpdateSection: (id: string, event: FormEvent<HTMLFormElement>) => Promise<boolean>; onDeleteSection: (section: WorkspaceSection) => void }) {
+  const [activeTab, setActiveTab] = useState<'participants' | 'sections' | 'signatures'>('participants')
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Участники и настройки</h1><p>Роли, доступы и личные пароли</p></div>{canInvite && <button className="button inverse-button" type="button" onClick={() => onShare()}>Поделиться приложением</button>}</section><section className="settings-grid"><div className="settings-main"><div className="settings-heading settings-tabs-heading"><div><p className="eyebrow">Настройки интерфейса</p><div className="settings-tabs" role="tablist" aria-label="Настройки интерфейса"><button type="button" role="tab" aria-selected={activeTab === 'participants'} className={activeTab === 'participants' ? 'active' : ''} onClick={() => setActiveTab('participants')}>Участники</button>{canManageMembers && <button type="button" role="tab" aria-selected={activeTab === 'sections'} className={activeTab === 'sections' ? 'active' : ''} onClick={() => setActiveTab('sections')}>Управление разделами</button>}<button type="button" role="tab" aria-selected={activeTab === 'signatures'} className={activeTab === 'signatures' ? 'active' : ''} onClick={() => setActiveTab('signatures')}>Подписали положение</button></div></div>{activeTab === 'participants' && <span>{participants.length}</span>}</div>
     {activeTab === 'participants' && <div className="settings-tab-panel" role="tabpanel">{participants.map((participant) => { const canSetThisPassword = canManageMembers || participant.role === 'participant'; return <article className="participant-row" key={participant.id}><ParticipantAvatar participant={participant} /><div className="participant-identity"><b>{participant.name}</b><a href={`mailto:${participant.email}`}>{participant.email}</a><small>{participant.status === 'active' ? 'Активен' : 'Ожидает первого входа'}</small></div><label><span>Роль</span><select value={participant.role} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { role: event.target.value as Role })}>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label><div className="participant-section-access"><span>Доступные разделы</span><div className="participant-section-list">{sections.map((section) => { const roleGrantsAccess = participant.role === 'developer' || participant.role === 'leader' || section.accessRoles.includes(participant.role); const checked = roleGrantsAccess || participant.sections.includes(section.id); return <label key={section.id}><input type="checkbox" checked={checked} disabled={!canManageMembers || participant.id === DEVELOPER_ID || roleGrantsAccess} onChange={(event) => { const nextSections = new Set(participant.sections); if (event.target.checked) nextSections.add(section.id); else nextSections.delete(section.id); onUpdate(participant.id, { sections: Array.from(nextSections) }) }} /><span>{section.title}</span></label> })}</div></div><div className="participant-actions"><button className="icon-button" type="button" aria-label={`Скопировать данные входа для ${participant.name}`} onClick={() => onShare(participant.email)}>↗</button>{canManageMembers && participant.id !== DEVELOPER_ID && <button className="icon-button danger" type="button" aria-label={`Удалить ${participant.name}`} onClick={() => onRemove(participant.id)}>×</button>}</div>{canSetThisPassword && <form className="participant-password" onSubmit={(event) => onParticipantPassword(participant.id, event)}><label><span>Новый личный пароль</span><input name="participantPassword" type="password" minLength={6} autoComplete="new-password" placeholder="Не меньше 6 символов" required /></label><button className="button" type="submit">Установить пароль</button></form>}</article> })}
     {canInvite && <form className="invite-form" onSubmit={onInvite}><div><p className="eyebrow">Новый участник</p><h2>Добавить участника</h2></div><label>Имя<input name="name" placeholder="Имя и фамилия" required /></label><label>Почта<input name="email" type="email" placeholder="name@example.com" required /></label><label>Личный пароль<input name="personalPassword" type="password" minLength={6} autoComplete="new-password" placeholder="Не меньше 6 символов" required /></label>{canManageMembers ? <label>Роль<select name="role" defaultValue="participant">{(Object.keys(ROLE_LABELS) as Role[]).filter((role) => role !== 'developer').map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label> : <input name="role" type="hidden" value="participant" />}<button className="button button-solid" type="submit">Добавить участника</button></form>}</div>}
     {activeTab === 'sections' && canManageMembers && <SectionManagement sections={sections} onUpdateSection={onUpdateSection} onDeleteSection={onDeleteSection} />}
+    {activeTab === 'signatures' && <PolicySignaturesList signatures={signatures} loading={signaturesLoading} />}
   </div><aside className="settings-side"><section className="settings-panel"><p className="eyebrow">Права доступа</p><h2>Роли</h2>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <div className="role-note" key={role}><b>{ROLE_LABELS[role]}</b><p>{ROLE_DESCRIPTIONS[role]}</p></div>)}</section>{canManageMembers && <section className="settings-panel"><p className="eyebrow">Безопасность</p><h2>Общий пароль</h2><form className="password-form" onSubmit={onPassword}><label>Новый пароль<input name="newPassword" type="password" minLength={4} required /></label><button className="button" type="submit">Изменить пароль</button></form></section>}<section className="settings-panel developer-card"><span className="access-chip">Разраб</span><h2>Андрей Комов</h2><a href="mailto:a.s.komow@gmail.com">a.s.komow@gmail.com</a><p>Техническое сопровождение воркхаба.</p></section></aside></section></main>
 }
 
