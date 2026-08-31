@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { CalendarScreen, ScheduleScreen } from './CalendarScreen'
-import type { CalendarAttachment, CalendarEvent, CalendarEventInput, ScheduleEntry, ScheduleEntryInput, ScheduleRegularAbsence } from './CalendarScreen'
+import type { CalendarAttachment, CalendarEvent, CalendarEventInput, ScheduleAbsence, ScheduleEntry, ScheduleEntryInput, ScheduleRegularAbsence } from './CalendarScreen'
 import { ContentPlanScreen } from './ContentPlanScreen'
 import type { ContentPlanAttachment, ContentPlanInput, ContentPlanItem } from './ContentPlanScreen'
 import { WardrobeScreen } from './WardrobeScreen'
@@ -59,15 +59,15 @@ const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const SUPABASE_PUBLISHABLE_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY
 const STANDARD_UPLOAD_LIMIT = 6 * 1024 * 1024
 const MAX_FILE_SIZE = 50 * 1024 * 1024
-const CONTENT_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
-const WARDROBE_MANAGER_ROLES: Role[] = ['developer', 'leader', 'teacher', 'admin']
+const FULL_ACCESS_ROLES: Role[] = ['developer', 'leader', 'teacher']
+const CONTENT_PLAN_MANAGER_ROLES: Role[] = [...FULL_ACCESS_ROLES, 'admin']
 const ROLE_LABELS: Record<Role, string> = { developer: 'Разраб', leader: 'Руководитель', teacher: 'Педагог', admin: 'Админ', participant: 'Участник' }
 const ROLE_DESCRIPTIONS: Record<Role, string> = {
   developer: 'Техническое сопровождение и полный доступ ко всем настройкам.',
   leader: 'Полный доступ ко всем разделам, участникам, ролям и настройкам.',
-  teacher: 'Работа с материалами, календарём и доступными по роли разделами.',
-  admin: 'Работа с материалами, календарём и доступными по роли разделами.',
-  participant: 'Работа в доступных разделах без удаления материалов.',
+  teacher: 'Полный доступ ко всем разделам, участникам, ролям и настройкам.',
+  admin: 'Просмотр всех разделов. Редактирование только контент-плана и собственных отсутствий.',
+  participant: 'Календарь занятий, календарь репертуара, хранилище и положение. В расписании управляет только своими отсутствиями.',
 }
 
 const STARTUP_REQUEST_TIMEOUT = 8000
@@ -188,6 +188,9 @@ function mapScheduleEntry(row: Record<string, unknown>): ScheduleEntry {
 function mapScheduleRegularAbsence(row: Record<string, unknown>): ScheduleRegularAbsence {
   return { seriesId: String(row.series_id), profileId: String(row.profile_id), reason: String(row.reason ?? '') }
 }
+function mapScheduleAbsence(row: Record<string, unknown>): ScheduleAbsence {
+  return { entryId: String(row.entry_id), profileId: String(row.profile_id), reason: String(row.reason ?? '') }
+}
 function mapContentPlanItem(row: Record<string, unknown>): ContentPlanItem {
   return {
     id: String(row.id), kind: String(row.kind) as ContentPlanItem['kind'], contentDate: String(row.content_date),
@@ -201,11 +204,15 @@ function mapWardrobeItem(row: Record<string, unknown>): WardrobeItem {
     updatedByName: String(row.updated_by_name ?? ''), updatedAt: new Date(String(row.updated_at)).getTime(),
   }
 }
+function roleHasPermanentSectionAccess(role: Role, section: WorkspaceSection) {
+  if (FULL_ACCESS_ROLES.includes(role) || role === 'admin') return true
+  return section.id === CALENDAR_SECTION || section.id === SCHEDULE_SECTION || section.id === POLICY_SECTION || /хранилищ/i.test(section.title)
+}
 function profileHasSectionAccess(targetProfile: Participant | null, sectionId: string, availableSections: WorkspaceSection[]) {
   if (!targetProfile) return false
-  if (targetProfile.role === 'developer' || targetProfile.role === 'leader') return true
   const section = availableSections.find((item) => item.id === sectionId)
-  return targetProfile.sections.includes(sectionId) || Boolean(section?.accessRoles.includes(targetProfile.role))
+  if (!section) return false
+  return roleHasPermanentSectionAccess(targetProfile.role, section) || targetProfile.sections.includes(sectionId)
 }
 
 async function openAttachment(file: Attachment) {
@@ -303,6 +310,7 @@ function App() {
   const [sections, setSections] = useState<WorkspaceSection[]>([])
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
   const [scheduleEntries, setScheduleEntries] = useState<ScheduleEntry[]>([])
+  const [scheduleAbsences, setScheduleAbsences] = useState<ScheduleAbsence[]>([])
   const [scheduleRegularAbsences, setScheduleRegularAbsences] = useState<ScheduleRegularAbsence[]>([])
   const [scheduleParticipantNames, setScheduleParticipantNames] = useState<Record<string, string>>({})
   const [contentPlanItems, setContentPlanItems] = useState<ContentPlanItem[]>([])
@@ -344,9 +352,9 @@ function App() {
   }, [appNotice])
 
   const currentRole: Role = profile?.role ?? 'participant'
-  const canManageMembers = currentRole === 'developer' || currentRole === 'leader'
-  const canInvite = CONTENT_MANAGER_ROLES.includes(currentRole)
-  const canDelete = CONTENT_MANAGER_ROLES.includes(currentRole)
+  const canManageMembers = FULL_ACCESS_ROLES.includes(currentRole)
+  const canInvite = canManageMembers
+  const canDelete = canManageMembers
   const canCreateSections = canManageMembers
   const scheduleSection = sections.find((section) => section.id === SCHEDULE_SECTION) ?? sections.find((section) => section.id !== COLLECTION_SECTION && section.id !== CALENDAR_SECTION && /расписан/i.test(section.title))
   const contentPlanSection = sections.find((section) => section.id === CONTENT_PLAN_SECTION) ?? sections.find((section) => /контент[- ]план/i.test(section.title))
@@ -360,7 +368,7 @@ function App() {
   const canOpenPolicy = Boolean(policySection && profileHasSectionAccess(profile, policySection.id, sections))
 
   async function loadData(activeSession: Session | null = session, activePersonalSession: string | null = personalSession, onReady?: () => void) {
-    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setContentPlanItems([]); setWardrobeItems([]); return true }
+    if (!activeSession?.user && !activePersonalSession) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleAbsences([]); setContentPlanItems([]); setWardrobeItems([]); return true }
     const sectionRequest = supabase.from('sections').select('*').order('sort_order')
     let ownProfileResult
     try {
@@ -373,7 +381,7 @@ function App() {
     if (profileError) { setAppError(profileError.message); return false }
     setAppError('')
     const rawProfile = ownProfile ? mapParticipant(ownProfile as Record<string, unknown>) : null
-    if (!rawProfile) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); setWardrobeItems([]); return true }
+    if (!rawProfile) { setProfile(null); setParticipants([]); setMaterials([]); setSections([]); setCalendarEvents([]); setScheduleEntries([]); setScheduleAbsences([]); setScheduleRegularAbsences([]); setScheduleParticipantNames({}); setContentPlanItems([]); setWardrobeItems([]); return true }
 
     setProfile(rawProfile)
     let sectionResult
@@ -393,8 +401,8 @@ function App() {
       setProfile((current) => current?.id === profileWithAvatar.id ? profileWithAvatar : current)
     })
 
-    const canLoadParticipants = ['developer', 'leader', 'teacher', 'admin'].includes(rawProfile.role)
-    const canLoadMaterials = rawProfile.role === 'developer' || rawProfile.role === 'leader' || rawProfile.sections.includes(COLLECTION_SECTION)
+    const canLoadParticipants = FULL_ACCESS_ROLES.includes(rawProfile.role)
+    const canLoadMaterials = FULL_ACCESS_ROLES.includes(rawProfile.role) || rawProfile.role === 'admin' || rawProfile.sections.includes(COLLECTION_SECTION)
     const participantsPromise = canLoadParticipants
       ? supabase.from('profiles').select('*').order('created_at')
       : Promise.resolve({ data: [] as Participant[], error: null })
@@ -403,6 +411,7 @@ function App() {
       : Promise.resolve({ data: [], error: null })
     const eventPromise = supabase.from('calendar_events').select('*').order('event_date').order('start_time')
     const schedulePromise = supabase.from('schedule_entries').select('*').order('event_date').order('start_time')
+    const datedAbsencePromise = supabase.from('schedule_absences').select('*')
     const absencePromise = supabase.from('schedule_regular_absences').select('*')
     const scheduleNamesPromise = supabase.rpc('get_schedule_participant_names')
     const contentPlanPromise = supabase.from('content_plan_items').select('*').order('content_date').order('created_at')
@@ -412,6 +421,7 @@ function App() {
       backgroundResults = await withTimeout(Promise.all([
         eventPromise,
         schedulePromise,
+        datedAbsencePromise,
         absencePromise,
         scheduleNamesPromise,
         contentPlanPromise,
@@ -422,13 +432,16 @@ function App() {
       setAppError('Часть данных загружается дольше обычного. Главный экран уже доступен — попробуйте открыть раздел ещё раз.')
       return true
     }
-    const [eventResult, scheduleResult, absenceResult, scheduleNamesResult, contentPlanResult, participantsResult, materialsResult] = backgroundResults
+    const [eventResult, scheduleResult, datedAbsenceResult, absenceResult, scheduleNamesResult, contentPlanResult, participantsResult, materialsResult] = backgroundResults
     const { data: eventRows, error: eventError } = eventResult
     if (eventError && eventError.code !== 'PGRST205') setAppError(eventError.message)
     else setCalendarEvents((eventRows ?? []).map(mapCalendarEvent))
     const { data: scheduleRows, error: scheduleError } = scheduleResult
     if (scheduleError && scheduleError.code !== 'PGRST205') setAppError(scheduleError.message)
     else setScheduleEntries((scheduleRows ?? []).map(mapScheduleEntry))
+    const { data: datedAbsenceRows, error: datedAbsenceError } = datedAbsenceResult
+    if (datedAbsenceError && datedAbsenceError.code !== 'PGRST205') setAppError(datedAbsenceError.message)
+    else setScheduleAbsences((datedAbsenceRows ?? []).map(mapScheduleAbsence))
     const { data: absenceRows, error: absenceError } = absenceResult
     if (absenceError && absenceError.code !== 'PGRST205') setAppError(absenceError.message)
     else setScheduleRegularAbsences((absenceRows ?? []).map(mapScheduleRegularAbsence))
@@ -450,7 +463,7 @@ function App() {
       else {
         const loadedMaterials = (materialsResult.data ?? []).map(mapMaterial)
         setMaterials(loadedMaterials)
-        const canPurgeExpired = CONTENT_MANAGER_ROLES.includes(rawProfile.role)
+        const canPurgeExpired = FULL_ACCESS_ROLES.includes(rawProfile.role)
         const expiredMaterials = canPurgeExpired
           ? loadedMaterials.filter((item) => item.deletedAt && Date.now() - item.deletedAt >= 30 * DAY)
           : []
@@ -607,6 +620,7 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'calendar_events' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_entries' }, () => loadData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_absences' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'schedule_regular_absences' }, () => loadData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'content_plan_items' }, () => loadData())
       .subscribe()
@@ -765,7 +779,7 @@ function App() {
     const form = event.currentTarget; const data = new FormData(form); const requestedRole = String(data.get('role')) as Role; const role: Role = canManageMembers ? requestedRole : 'participant'
     const { error } = await supabase.rpc('create_participant_with_password', {
       participant_name: String(data.get('name')).trim(), participant_email: String(data.get('email')).trim(), participant_role: role,
-      participant_sections: [COLLECTION_SECTION], initial_password: String(data.get('personalPassword')),
+      participant_sections: [], initial_password: String(data.get('personalPassword')),
     })
     if (error) {
       setAppError(error.message.includes('email_already_exists') ? 'Участник с такой почтой уже существует.' : error.message.includes('password_too_short') ? 'Личный пароль должен содержать не меньше 6 символов.' : 'Не удалось добавить участника.')
@@ -995,7 +1009,7 @@ function App() {
   }
 
   async function saveCalendarEvent(input: CalendarEventInput, initial: CalendarEvent | null) {
-    if (!profile || !CONTENT_MANAGER_ROLES.includes(profile.role)) return false
+    if (!profile || !FULL_ACCESS_ROLES.includes(profile.role)) return false
     const eventId = initial?.id ?? crypto.randomUUID()
     try {
       const attachments = await uploadCalendarFiles(input.attachments, eventId)
@@ -1017,7 +1031,7 @@ function App() {
   }
 
   async function deleteCalendarEvent(item: CalendarEvent) {
-    if (!CONTENT_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить событие «${item.title}» ${item.eventDate}? Оно исчезнет из календаря и синхронизированного расписания. Это действие нельзя отменить.`)) return
+    if (!FULL_ACCESS_ROLES.includes(currentRole) || !window.confirm(`Удалить событие «${item.title}» ${item.eventDate}? Оно исчезнет из календаря и синхронизированного расписания. Это действие нельзя отменить.`)) return
     const { error } = await supabase.from('calendar_events').delete().eq('id', item.id)
     if (error) { setAppError(error.message); return }
     const paths = item.attachments.flatMap((file) => file.path ? [file.path] : [])
@@ -1027,7 +1041,7 @@ function App() {
   }
 
   async function saveScheduleEntry(input: ScheduleEntryInput, initial: ScheduleEntry | null) {
-    if (!profile || !CONTENT_MANAGER_ROLES.includes(profile.role)) return false
+    if (!profile || !FULL_ACCESS_ROLES.includes(profile.role)) return false
     if (input.endTime && input.endTime <= input.startTime) { setAppError('Время окончания должно быть позже времени начала.'); return false }
     if (initial?.seriesId) {
       const { error: seriesError } = await supabase.rpc('update_schedule_series', {
@@ -1073,7 +1087,7 @@ function App() {
   async function deleteScheduleEntry(item: ScheduleEntry) {
     const title = item.className || 'Занятие'
     const prompt = item.seriesId ? `Удалить регулярное занятие «${title}» и все даты этой серии? Это действие нельзя отменить.` : `Удалить запись «${title}» ${item.eventDate}? Это действие нельзя отменить.`
-    if (!CONTENT_MANAGER_ROLES.includes(currentRole) || !window.confirm(prompt)) return
+    if (!FULL_ACCESS_ROLES.includes(currentRole) || !window.confirm(prompt)) return
     const { error } = item.seriesId ? await supabase.rpc('delete_schedule_series', { target_series_id: item.seriesId }) : await supabase.from('schedule_entries').delete().eq('id', item.id)
     if (error) { setAppError(error.message); return }
     setAppNotice(item.seriesId ? 'Регулярное занятие и вся серия удалены' : 'Запись расписания удалена')
@@ -1085,6 +1099,15 @@ function App() {
     const { error } = await supabase.rpc('set_own_regular_absence', { target_series_id: seriesId, absence_reason: reason })
     if (error) { setAppError(error.message); return false }
     setAppNotice(reason ? 'Регулярное отсутствие сохранено во всей серии' : 'Регулярное отсутствие убрано из всей серии')
+    await loadData()
+    return true
+  }
+
+  async function saveOwnAbsence(entryId: string, reason: string) {
+    if (!profile) return false
+    const { error } = await supabase.rpc('set_own_schedule_absence', { target_entry_id: entryId, absence_reason: reason })
+    if (error) { setAppError(error.message); return false }
+    setAppNotice(reason ? 'Отсутствие на эту дату сохранено' : 'Отсутствие на эту дату убрано')
     await loadData()
     return true
   }
@@ -1102,7 +1125,7 @@ function App() {
   }
 
   async function saveContentPlanItem(input: ContentPlanInput, initial: ContentPlanItem | null) {
-    if (!profile || !CONTENT_MANAGER_ROLES.includes(profile.role)) return false
+    if (!profile || !CONTENT_PLAN_MANAGER_ROLES.includes(profile.role)) return false
     const itemId = initial?.id ?? crypto.randomUUID()
     try {
       const attachments = await uploadContentPlanFiles(input.attachments, itemId)
@@ -1124,7 +1147,7 @@ function App() {
   }
 
   async function deleteContentPlanItem(item: ContentPlanItem) {
-    if (!CONTENT_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить строку контент-плана за ${item.contentDate}? Это действие нельзя отменить.`)) return
+    if (!CONTENT_PLAN_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить строку контент-плана за ${item.contentDate}? Это действие нельзя отменить.`)) return
     const paths = item.attachments.flatMap((file) => file.path ? [file.path] : [])
     if (paths.length) {
       const { error: storageError } = await supabase.storage.from('content-plan').remove(paths)
@@ -1137,7 +1160,7 @@ function App() {
   }
 
   async function saveWardrobeItem(input: WardrobeItemInput, initial: WardrobeItem | null) {
-    if (!profile || !WARDROBE_MANAGER_ROLES.includes(profile.role)) return false
+    if (!profile || !FULL_ACCESS_ROLES.includes(profile.role)) return false
     const payload = { performance: input.performance, item_quantity: input.itemQuantity }
     const { error } = initial
       ? await supabase.from('wardrobe_items').update(payload).eq('id', initial.id)
@@ -1149,7 +1172,7 @@ function App() {
   }
 
   async function deleteWardrobeItem(item: WardrobeItem) {
-    if (!WARDROBE_MANAGER_ROLES.includes(currentRole) || !window.confirm(`Удалить строку «${item.performance} — ${item.itemQuantity}»? Это действие нельзя отменить.`)) return
+    if (!FULL_ACCESS_ROLES.includes(currentRole) || !window.confirm(`Удалить строку «${item.performance} — ${item.itemQuantity}»? Это действие нельзя отменить.`)) return
     const { error } = await supabase.from('wardrobe_items').delete().eq('id', item.id)
     if (error) { setAppError(error.message); return }
     setAppNotice('Строка костюмерной удалена')
@@ -1192,14 +1215,14 @@ function App() {
     <div className={`screen-stage screen-stage-${screen}`} key={screen}>
       {screen === 'hub' && <Hub profile={profile} sections={sections} canOpenCollection={canOpenCollection} canOpenCalendar={canOpenCalendar} canOpenSchedule={canOpenSchedule} canOpenContentPlan={canOpenContentPlan} canOpenWardrobe={canOpenWardrobe} canOpenPolicy={canOpenPolicy} canInvite={canInvite} canCreateSections={canCreateSections} onCollection={() => requireAccess('collection')} onCalendar={() => requireAccess('calendar')} onSchedule={() => requireAccess('schedule')} onContentPlan={() => requireAccess('contentPlan')} onWardrobe={() => requireAccess('wardrobe')} onPolicy={() => requireAccess('policy')} onSettings={() => requireAccess('settings')} onSection={openCustomSection} onCreateSection={createSection} />}
       {screen === 'auth' && <AuthScreen message={authMessage} onSubmit={signInWithPersonalPassword} onBack={() => setScreen('hub')} />}
-      {screen === 'collection' && <CollectionScreen title={sections.find((section) => section.id === COLLECTION_SECTION)?.title ?? 'Копилка материалов'} description={sections.find((section) => section.id === COLLECTION_SECTION)?.description ?? 'Общие материалы театра'} materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
+      {screen === 'collection' && <CollectionScreen title={sections.find((section) => section.id === COLLECTION_SECTION)?.title ?? 'Копилка материалов'} description={sections.find((section) => section.id === COLLECTION_SECTION)?.description ?? 'Общие материалы театра'} materials={filteredMaterials} categories={categories} activeFilters={activeFilters} query={query} trashCount={trashMaterials.length} canManage={FULL_ACCESS_ROLES.includes(currentRole)} canDelete={canDelete} reactionMenu={reactionMenu} openComments={openComments} onBack={() => setScreen('hub')} onAdd={() => { setEditingMaterial(null); setScreen('form') }} onQuery={setQuery} onClear={() => { setQuery(''); setActiveFilters([]) }} onTrashScreen={() => setScreen('trash')} onFilter={(category) => setActiveFilters((current) => current.includes(category) ? current.filter((item) => item !== category) : [...current, category])} onPin={togglePinned} onEdit={(item) => { setEditingMaterial(item); setScreen('form') }} onTrash={moveToTrash} onReactionMenu={setReactionMenu} onReact={react} onComments={setOpenComments} onAddComment={addComment} />}
       {screen === 'form' && <MaterialForm categories={categories} initial={editingMaterial} onCancel={() => { setEditingMaterial(null); setScreen('collection') }} onSave={editingMaterial ? updateMaterial : saveMaterial} />}
       {screen === 'trash' && <TrashScreen materials={trashMaterials} onBack={() => setScreen('collection')} onRestore={restore} onRemove={removeForever} />}
       {screen === 'settings' && <SettingsScreen participants={participants} sections={sections} signatures={policySignatures} signaturesLoading={policySignaturesLoading} canInvite={canInvite} canManageMembers={canManageMembers} onBack={() => setScreen('hub')} onShare={copyInvitation} onInvite={inviteParticipant} onUpdate={updateParticipant} onRemove={removeParticipant} onParticipantPassword={setParticipantPassword} onPassword={changePassword} onUpdateSection={updateSection} onReorderSections={reorderSections} onDeleteSection={deleteSection} />}
-      {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
-      {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} regularAbsences={scheduleRegularAbsences} participantNames={scheduleParticipantNames} currentProfileId={profile?.id ?? null} canManage={CONTENT_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} onSaveRegularAbsence={saveOwnRegularAbsence} />}
-      {screen === 'contentPlan' && contentPlanSection && <ContentPlanScreen title={contentPlanSection.title} description={contentPlanSection.description || 'Публикации, съёмки и разработка контента'} entries={contentPlanItems} onBack={() => setScreen('hub')} onSave={saveContentPlanItem} onDelete={deleteContentPlanItem} />}
-      {screen === 'wardrobe' && wardrobeSection && <WardrobeScreen title={wardrobeSection.title} description={wardrobeSection.description || 'Костюмы, реквизит и всё необходимое для спектаклей'} items={wardrobeItems} loading={wardrobeLoading} canManage={WARDROBE_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveWardrobeItem} onDelete={deleteWardrobeItem} />}
+      {screen === 'calendar' && <CalendarScreen title={sections.find((section) => section.id === CALENDAR_SECTION)?.title ?? 'Календарь репертуара'} description={sections.find((section) => section.id === CALENDAR_SECTION)?.description ?? 'Показы, репетиции и события театра'} events={calendarEvents} canManage={FULL_ACCESS_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveCalendarEvent} onDelete={deleteCalendarEvent} />}
+      {screen === 'schedule' && <ScheduleScreen title={scheduleSection?.title ?? 'Расписание занятий'} description={scheduleSection?.description ?? 'Дата, время, педагог, класс и отсутствие'} events={calendarEvents} entries={scheduleEntries} absences={scheduleAbsences} regularAbsences={scheduleRegularAbsences} participantNames={scheduleParticipantNames} currentProfileId={profile?.id ?? null} canManage={FULL_ACCESS_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSaveEvent={saveCalendarEvent} onDeleteEvent={deleteCalendarEvent} onSaveEntry={saveScheduleEntry} onDeleteEntry={deleteScheduleEntry} onSaveAbsence={saveOwnAbsence} onSaveRegularAbsence={saveOwnRegularAbsence} />}
+      {screen === 'contentPlan' && contentPlanSection && <ContentPlanScreen title={contentPlanSection.title} description={contentPlanSection.description || 'Публикации, съёмки и разработка контента'} entries={contentPlanItems} canManage={CONTENT_PLAN_MANAGER_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveContentPlanItem} onDelete={deleteContentPlanItem} />}
+      {screen === 'wardrobe' && wardrobeSection && <WardrobeScreen title={wardrobeSection.title} description={wardrobeSection.description || 'Костюмы, реквизит и всё необходимое для спектаклей'} items={wardrobeItems} loading={wardrobeLoading} canManage={FULL_ACCESS_ROLES.includes(currentRole)} onBack={() => setScreen('hub')} onSave={saveWardrobeItem} onDelete={deleteWardrobeItem} />}
       {screen === 'policy' && policySection && <ParticipationPolicyScreen title={policySection.title} description={policySection.description || 'Правила участия и обязанности в театре Т.А.М.'} signature={policySignatures.find((item) => item.profileId === profile?.id && item.policyVersion === POLICY_VERSION) ?? null} signing={policySigning} onBack={() => setScreen('hub')} onSign={signParticipationPolicy} />}
       {screen === 'custom' && activeSection && <CustomSectionScreen section={activeSection} onBack={() => setScreen('hub')} />}
     </div>
@@ -1231,7 +1254,7 @@ function Hub({ profile, sections, canOpenCollection, canOpenCalendar, canOpenSch
     if (section.id === calendarSection?.id) return <button className={unavailableClass(canOpenCalendar)} type="button" disabled={Boolean(profile) && !canOpenCalendar} onClick={onCalendar} key={section.id}><ModuleIcon name="calendar" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Показы, репетиции и события'}</small></span><span className="access-chip">{accessLabel(canOpenCalendar)}</span><span>→</span></button>
     if (section.id === scheduleSection?.id) return <button className={unavailableClass(canOpenSchedule)} type="button" disabled={Boolean(profile) && !canOpenSchedule} onClick={onSchedule} key={section.id}><ModuleIcon name="schedule" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Дата, время, педагог, класс и отсутствие'}</small></span><span className="access-chip">{accessLabel(canOpenSchedule)}</span><span>→</span></button>
     if (section.id === contentPlanSection?.id) return <button className={unavailableClass(canOpenContentPlan)} type="button" disabled={Boolean(profile) && !canOpenContentPlan} onClick={onContentPlan} key={section.id}><ModuleIcon name="contentPlan" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Публикации, съёмки и разработка контента'}</small></span><span className="access-chip">{accessLabel(canOpenContentPlan)}</span><span>→</span></button>
-    if (section.id === wardrobeSection?.id) return <button className={unavailableClass(canOpenWardrobe)} type="button" disabled={Boolean(profile) && !canOpenWardrobe} onClick={onWardrobe} key={section.id}><ModuleIcon name="wardrobe" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Костюмы, реквизит и всё необходимое для спектаклей'}</small></span><span className="access-chip">{!profile ? 'Личный вход' : !canOpenWardrobe ? 'Нет доступа' : WARDROBE_MANAGER_ROLES.includes(profile.role) ? 'Редактирование' : 'Только просмотр'}</span><span>→</span></button>
+    if (section.id === wardrobeSection?.id) return <button className={unavailableClass(canOpenWardrobe)} type="button" disabled={Boolean(profile) && !canOpenWardrobe} onClick={onWardrobe} key={section.id}><ModuleIcon name="wardrobe" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Костюмы, реквизит и всё необходимое для спектаклей'}</small></span><span className="access-chip">{!profile ? 'Личный вход' : !canOpenWardrobe ? 'Нет доступа' : FULL_ACCESS_ROLES.includes(profile.role) ? 'Редактирование' : 'Только просмотр'}</span><span>→</span></button>
     if (section.id === policySection?.id) return <button className={unavailableClass(canOpenPolicy)} type="button" disabled={Boolean(profile) && !canOpenPolicy} onClick={onPolicy} key={section.id}><ModuleIcon name="policy" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Правила участия и обязанности в театре Т.А.М.'}</small></span><span className="access-chip">{!profile ? 'Личный вход' : !canOpenPolicy ? 'Нет доступа' : 'Прочитать и подписать'}</span><span>→</span></button>
     const allowed = profileHasSectionAccess(profile, section.id, sections)
     return <button className={unavailableClass(allowed)} type="button" disabled={Boolean(profile) && !allowed} key={section.id} onClick={() => onSection(section)}><ModuleIcon name="draft" /><span className="module-copy"><b>{section.title}</b><small>{section.description || 'Раздел театра'}</small></span><span className="access-chip">{accessLabel(allowed)}</span><span>→</span></button>
@@ -1291,24 +1314,25 @@ function AuthScreen({ message, onSubmit, onBack }: { message: string; onSubmit: 
   return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Личный вход</h1><p>Почта и постоянный личный пароль</p></div></section><form className="auth-form" autoComplete="off" onSubmit={onSubmit}><label>Почта участника<input name="email" type="email" placeholder="name@example.com" autoComplete="off" required autoFocus /></label><label>Личный пароль<input name="personalPassword" type="password" minLength={6} autoComplete="off" required /></label><button className="button button-solid" type="submit">Войти</button>{message && <p className="auth-message" role="status">{message}</p>}</form></main>
 }
 
-type CollectionProps = { title: string; description: string; materials: Material[]; categories: string[]; activeFilters: string[]; query: string; trashCount: number; canDelete: boolean; reactionMenu: string | null; openComments: string | null; onBack: () => void; onAdd: () => void; onQuery: (value: string) => void; onClear: () => void; onTrashScreen: () => void; onFilter: (category: string) => void; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
+type CollectionProps = { title: string; description: string; materials: Material[]; categories: string[]; activeFilters: string[]; query: string; trashCount: number; canManage: boolean; canDelete: boolean; reactionMenu: string | null; openComments: string | null; onBack: () => void; onAdd: () => void; onQuery: (value: string) => void; onClear: () => void; onTrashScreen: () => void; onFilter: (category: string) => void; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
 function CollectionScreen(props: CollectionProps) {
-  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={props.onBack}>←</button><div><h1>{props.title}</h1><p>{props.description}</p></div><button className="button inverse-button" type="button" onClick={props.onAdd}>＋ Добавить</button></section>
+  return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={props.onBack}>←</button><div><h1>{props.title}</h1><p>{props.description}</p></div>{props.canManage && <button className="button inverse-button" type="button" onClick={props.onAdd}>＋ Добавить</button>}</section>
     <section className="collection-tools"><label className="search-box"><span>⌕</span><input value={props.query} onChange={(event) => props.onQuery(event.target.value)} placeholder="Поиск по всем полям" /></label><button className="button" type="button" onClick={props.onClear}>Очистить</button>{props.canDelete && <button className="button" type="button" onClick={props.onTrashScreen}>Корзина{props.trashCount ? ` · ${props.trashCount}` : ''}</button>}</section>
     <section className="filters" aria-label="Фильтры"><span>Фильтр:</span>{props.categories.map((category) => <button className={props.activeFilters.includes(category) ? 'filter active' : 'filter'} type="button" key={category} onClick={() => props.onFilter(category)}>{category}</button>)}</section>
     <section className="materials" aria-live="polite"><div className="desktop-table"><div className="material-row table-head"><span>Важно</span><span>Источник</span><span>Для чего</span><span>Что внутри</span><span>Реакции</span><span></span></div>{props.materials.map((item) => <MaterialRow key={item.id} item={item} mobile={false} {...props} commentsOpen={props.openComments} />)}</div><div className="mobile-cards">{props.materials.map((item) => <MaterialRow key={item.id} item={item} mobile {...props} commentsOpen={props.openComments} />)}</div>{!props.materials.length && <div className="empty-state">Здесь пока нет материалов</div>}</section>
   </main>
 }
 
-type RowProps = { item: Material; mobile: boolean; canDelete: boolean; reactionMenu: string | null; commentsOpen: string | null; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
-function MaterialRow({ item, mobile, canDelete, reactionMenu, commentsOpen, onPin, onEdit, onTrash, onReactionMenu, onReact, onComments, onAddComment }: RowProps) {
+type RowProps = { item: Material; mobile: boolean; canManage: boolean; canDelete: boolean; reactionMenu: string | null; commentsOpen: string | null; onPin: (id: string) => void; onEdit: (item: Material) => void; onTrash: (id: string) => void; onReactionMenu: (id: string | null) => void; onReact: (id: string, emoji: string) => void; onComments: (id: string | null) => void; onAddComment: (id: string, text: string) => void }
+function MaterialRow({ item, mobile, canManage, canDelete, reactionMenu, commentsOpen, onPin, onEdit, onTrash, onReactionMenu, onReact, onComments, onAddComment }: RowProps) {
   const [comment, setComment] = useState(''); const longPressTimer = useRef<number | null>(null); const longPressTriggered = useRef(false)
   const style = { '--row-color': `var(--category-${Math.abs(Array.from(normalize(item.category)).reduce((sum, letter) => sum + letter.codePointAt(0)!, 0)) % 6 + 1})` } as React.CSSProperties
   const reactionCount = Object.values(item.reactions).reduce((sum, count) => sum + count, 0)
-  const reactions = <div className="reaction-area"><button className="text-button" type="button" onPointerDown={() => { longPressTriggered.current = false; longPressTimer.current = window.setTimeout(() => { longPressTriggered.current = true; onReactionMenu(item.id) }, 450) }} onPointerUp={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onPointerLeave={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onClick={() => { if (longPressTriggered.current) { longPressTriggered.current = false; return }; onReactionMenu(reactionMenu === item.id ? null : item.id) }}>{reactionCount ? Object.entries(item.reactions).filter(([, count]) => count).map(([emoji, count]) => `${emoji}${count}`).join(' ') : '＋ реакция'}</button>{reactionMenu === item.id && <div className="reaction-menu">{REACTIONS.map((emoji) => <button type="button" key={emoji} onClick={() => onReact(item.id, emoji)}>{emoji}</button>)}</div>}</div>
-  const comments = commentsOpen === item.id && <div className="comments-panel">{item.comments.map((entry) => <p key={entry.id}><b>{entry.author}:</b> <LinkifyText text={entry.text} /></p>)}<form onSubmit={(event) => { event.preventDefault(); onAddComment(item.id, comment); setComment('') }}><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий" /><button className="button" type="submit">Добавить</button></form></div>
-  if (mobile) return <article className="material-card" style={style}><header><span className="category-chip">{item.category || 'Без категории'}</span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></header><section><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></section>{item.categoryFiles.length > 0 && <section><small>Для чего</small><AttachmentList files={item.categoryFiles} /></section>}<section><p><LinkifyText text={item.description} /></p><AttachmentList files={item.descriptionFiles} /></section><footer>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span></footer>{comments}</article>
-  return <article className="material-row" style={style}><span><button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button></span><span><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></span><span><span className="category-chip">{item.category || 'Без категории'}</span><AttachmentList files={item.categoryFiles} /></span><span><LinkifyText text={item.description} /><AttachmentList files={item.descriptionFiles} /></span><span>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button></span><span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span>{comments && <div className="row-comments">{comments}</div>}</article>
+  const reactionSummary = reactionCount ? Object.entries(item.reactions).filter(([, count]) => count).map(([emoji, count]) => `${emoji}${count}`).join(' ') : 'Нет реакций'
+  const reactions = <div className="reaction-area">{canManage ? <button className="text-button" type="button" onPointerDown={() => { longPressTriggered.current = false; longPressTimer.current = window.setTimeout(() => { longPressTriggered.current = true; onReactionMenu(item.id) }, 450) }} onPointerUp={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onPointerLeave={() => { if (longPressTimer.current) window.clearTimeout(longPressTimer.current) }} onClick={() => { if (longPressTriggered.current) { longPressTriggered.current = false; return }; onReactionMenu(reactionMenu === item.id ? null : item.id) }}>{reactionCount ? reactionSummary : '＋ реакция'}</button> : <span>{reactionSummary}</span>}{canManage && reactionMenu === item.id && <div className="reaction-menu">{REACTIONS.map((emoji) => <button type="button" key={emoji} onClick={() => onReact(item.id, emoji)}>{emoji}</button>)}</div>}</div>
+  const comments = commentsOpen === item.id && <div className="comments-panel">{item.comments.map((entry) => <p key={entry.id}><b>{entry.author}:</b> <LinkifyText text={entry.text} /></p>)}{canManage && <form onSubmit={(event) => { event.preventDefault(); onAddComment(item.id, comment); setComment('') }}><input value={comment} onChange={(event) => setComment(event.target.value)} placeholder="Написать комментарий" /><button className="button" type="submit">Добавить</button></form>}</div>
+  if (mobile) return <article className="material-card" style={style}><header><span className="category-chip">{item.category || 'Без категории'}</span>{canManage ? <button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button> : item.pinned && <span aria-label="Важный материал">◆</span>}</header><section><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></section>{item.categoryFiles.length > 0 && <section><small>Для чего</small><AttachmentList files={item.categoryFiles} /></section>}<section><p><LinkifyText text={item.description} /></p><AttachmentList files={item.descriptionFiles} /></section><footer>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button>{canManage && <span className="row-actions"><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</span>}</footer>{comments}</article>
+  return <article className="material-row" style={style}><span>{canManage ? <button className={item.pinned ? 'icon-button pinned' : 'icon-button'} type="button" aria-label={item.pinned ? 'Снять приоритет' : 'Поднять наверх'} onClick={() => onPin(item.id)}>◆</button> : item.pinned && <span aria-label="Важный материал">◆</span>}</span><span><b><LinkifyText text={item.source} /></b><AttachmentList files={item.sourceFiles} /></span><span><span className="category-chip">{item.category || 'Без категории'}</span><AttachmentList files={item.categoryFiles} /></span><span><LinkifyText text={item.description} /><AttachmentList files={item.descriptionFiles} /></span><span>{reactions}<button className="text-button" type="button" onClick={() => onComments(commentsOpen === item.id ? null : item.id)}>Комментарии {item.comments.length}</button></span><span className="row-actions">{canManage && <><button className="icon-button" type="button" aria-label="Редактировать" onClick={() => onEdit(item)}>✎</button>{canDelete && <button className="icon-button danger" type="button" aria-label="Переместить в корзину" onClick={() => onTrash(item.id)}>×</button>}</>}</span>{comments && <div className="row-comments">{comments}</div>}</article>
 }
 
 type MaterialInput = Pick<Material, 'source' | 'sourceFiles' | 'category' | 'categoryFiles' | 'description' | 'descriptionFiles'>
@@ -1338,7 +1362,7 @@ function TrashScreen({ materials, onBack, onRestore, onRemove }: { materials: Ma
 function SettingsScreen({ participants, sections, signatures, signaturesLoading, canInvite, canManageMembers, onBack, onShare, onInvite, onUpdate, onRemove, onParticipantPassword, onPassword, onUpdateSection, onReorderSections, onDeleteSection }: { participants: Participant[]; sections: WorkspaceSection[]; signatures: ParticipationPolicySignature[]; signaturesLoading: boolean; canInvite: boolean; canManageMembers: boolean; onBack: () => void; onShare: (email?: string) => void; onInvite: (event: FormEvent<HTMLFormElement>) => void; onUpdate: (id: string, changes: Partial<Participant>) => void; onRemove: (id: string) => void; onParticipantPassword: (id: string, event: FormEvent<HTMLFormElement>) => void; onPassword: (event: FormEvent<HTMLFormElement>) => void; onUpdateSection: (id: string, event: FormEvent<HTMLFormElement>) => Promise<boolean>; onReorderSections: (sections: WorkspaceSection[]) => Promise<boolean>; onDeleteSection: (section: WorkspaceSection) => void }) {
   const [activeTab, setActiveTab] = useState<'participants' | 'sections' | 'signatures'>('participants')
   return <main><section className="work-header compact"><button className="icon-button inverse" type="button" aria-label="Назад" onClick={onBack}>←</button><div><h1>Участники и настройки</h1><p>Роли, доступы и личные пароли</p></div>{canInvite && <button className="button inverse-button" type="button" onClick={() => onShare()}>Поделиться приложением</button>}</section><section className="settings-grid"><div className="settings-main"><div className="settings-heading settings-tabs-heading"><div><p className="eyebrow">Настройки интерфейса</p><div className="settings-tabs" role="tablist" aria-label="Настройки интерфейса"><button type="button" role="tab" aria-selected={activeTab === 'participants'} className={activeTab === 'participants' ? 'active' : ''} onClick={() => setActiveTab('participants')}>Участники</button>{canManageMembers && <button type="button" role="tab" aria-selected={activeTab === 'sections'} className={activeTab === 'sections' ? 'active' : ''} onClick={() => setActiveTab('sections')}>Управление разделами</button>}<button type="button" role="tab" aria-selected={activeTab === 'signatures'} className={activeTab === 'signatures' ? 'active' : ''} onClick={() => setActiveTab('signatures')}>Подписали положение</button></div></div>{activeTab === 'participants' && <span>{participants.length}</span>}</div>
-    {activeTab === 'participants' && <div className="settings-tab-panel" role="tabpanel">{participants.map((participant) => { const canSetThisPassword = canManageMembers || participant.role === 'participant'; return <article className="participant-row" key={participant.id}><ParticipantAvatar participant={participant} /><div className="participant-identity"><b>{participant.name}</b><a href={`mailto:${participant.email}`}>{participant.email}</a><small>{participant.status === 'active' ? 'Активен' : 'Ожидает первого входа'}</small></div><label><span>Роль</span><select value={participant.role} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { role: event.target.value as Role })}>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label><div className="participant-section-access"><span>Доступные разделы</span><div className="participant-section-list">{sections.map((section) => { const roleGrantsAccess = participant.role === 'developer' || participant.role === 'leader' || section.accessRoles.includes(participant.role); const checked = roleGrantsAccess || participant.sections.includes(section.id); return <label key={section.id}><input type="checkbox" checked={checked} disabled={!canManageMembers || participant.id === DEVELOPER_ID || roleGrantsAccess} onChange={(event) => { const nextSections = new Set(participant.sections); if (event.target.checked) nextSections.add(section.id); else nextSections.delete(section.id); onUpdate(participant.id, { sections: Array.from(nextSections) }) }} /><span>{section.title}</span></label> })}</div></div><div className="participant-actions"><button className="icon-button" type="button" aria-label={`Скопировать данные входа для ${participant.name}`} onClick={() => onShare(participant.email)}>↗</button>{canManageMembers && participant.id !== DEVELOPER_ID && <button className="icon-button danger" type="button" aria-label={`Удалить ${participant.name}`} onClick={() => onRemove(participant.id)}>×</button>}</div>{canSetThisPassword && <form className="participant-password" onSubmit={(event) => onParticipantPassword(participant.id, event)}><label><span>Новый личный пароль</span><input name="participantPassword" type="password" minLength={6} autoComplete="new-password" placeholder="Не меньше 6 символов" required /></label><button className="button" type="submit">Установить пароль</button></form>}</article> })}
+    {activeTab === 'participants' && <div className="settings-tab-panel" role="tabpanel">{participants.map((participant) => { const canSetThisPassword = canManageMembers; return <article className="participant-row" key={participant.id}><ParticipantAvatar participant={participant} /><div className="participant-identity"><b>{participant.name}</b><a href={`mailto:${participant.email}`}>{participant.email}</a><small>{participant.status === 'active' ? 'Активен' : 'Ожидает первого входа'}</small></div><label><span>Роль</span><select value={participant.role} disabled={!canManageMembers || participant.id === DEVELOPER_ID} onChange={(event) => onUpdate(participant.id, { role: event.target.value as Role })}>{(Object.keys(ROLE_LABELS) as Role[]).map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label><div className="participant-section-access"><span>Доступные разделы</span><div className="participant-section-list">{sections.map((section) => { const permanentAccess = roleHasPermanentSectionAccess(participant.role, section); const checked = permanentAccess || participant.sections.includes(section.id); return <label key={section.id}><input type="checkbox" checked={checked} disabled={!canManageMembers || permanentAccess} onChange={(event) => { const nextSections = new Set(participant.sections); if (event.target.checked) nextSections.add(section.id); else nextSections.delete(section.id); onUpdate(participant.id, { sections: Array.from(nextSections) }) }} /><span>{section.title}{permanentAccess ? ' · постоянно' : ''}</span></label> })}</div></div><div className="participant-actions"><button className="icon-button" type="button" aria-label={`Скопировать данные входа для ${participant.name}`} onClick={() => onShare(participant.email)}>↗</button>{canManageMembers && participant.id !== DEVELOPER_ID && <button className="icon-button danger" type="button" aria-label={`Удалить ${participant.name}`} onClick={() => onRemove(participant.id)}>×</button>}</div>{canSetThisPassword && <form className="participant-password" onSubmit={(event) => onParticipantPassword(participant.id, event)}><label><span>Новый личный пароль</span><input name="participantPassword" type="password" minLength={6} autoComplete="new-password" placeholder="Не меньше 6 символов" required /></label><button className="button" type="submit">Установить пароль</button></form>}</article> })}
     {canInvite && <form className="invite-form" onSubmit={onInvite}><div><p className="eyebrow">Новый участник</p><h2>Добавить участника</h2></div><label>Имя<input name="name" placeholder="Имя и фамилия" required /></label><label>Почта<input name="email" type="email" placeholder="name@example.com" required /></label><label>Личный пароль<input name="personalPassword" type="password" minLength={6} autoComplete="new-password" placeholder="Не меньше 6 символов" required /></label>{canManageMembers ? <label>Роль<select name="role" defaultValue="participant">{(Object.keys(ROLE_LABELS) as Role[]).filter((role) => role !== 'developer').map((role) => <option value={role} key={role}>{ROLE_LABELS[role]}</option>)}</select></label> : <input name="role" type="hidden" value="participant" />}<button className="button button-solid" type="submit">Добавить участника</button></form>}</div>}
     {activeTab === 'sections' && canManageMembers && <SectionManagement sections={sections} onUpdateSection={onUpdateSection} onReorderSections={onReorderSections} onDeleteSection={onDeleteSection} />}
     {activeTab === 'signatures' && <PolicySignaturesList signatures={signatures} loading={signaturesLoading} />}
